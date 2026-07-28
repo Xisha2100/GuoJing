@@ -4,7 +4,7 @@
 
 The Python backend uses a `src` layout. Place importable code under `src/guojing/`, mirror it under `tests/`, and keep module learning notes under `docs/learning/`. The initial commit contains a short `README.md`, a `LICENSE`, and a Python-oriented `.gitignore`; these files are currently absent from the working tree. Do not restore or replace those user deletions as part of unrelated changes.
 
-Keep HTTP adapters under `src/guojing/api/` and cross-cutting configuration under `src/guojing/core/`. Do not create speculative database, agent, or infrastructure layers before a concrete use case needs them. Keep root-level files for project-wide documentation and configuration.
+Keep HTTP adapters under `src/guojing/api/`, cross-cutting configuration under `src/guojing/core/`, and framework-independent business rules under `src/guojing/domain/`. Domain modules must not import FastAPI, storage clients, or agent frameworks. Prefer immutable domain value objects and deterministic functions whose tests require no I/O. Do not create speculative database, agent, or infrastructure layers before a concrete use case needs them. Keep root-level files for project-wide documentation and configuration.
 
 The scoped `src/.gitignore` and `tests/.gitignore` files exclude generated Python bytecode while the root `.gitignore` remains intentionally absent.
 
