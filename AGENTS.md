@@ -2,15 +2,15 @@
 
 ## Project Structure & Module Organization
 
-The Python backend uses a `src` layout. Place importable code under `src/guojing/`, mirror it under `tests/`, and keep module learning notes under `docs/learning/`. The initial commit contains a short `README.md`, a `LICENSE`, and a Python-oriented `.gitignore`; these files are currently absent from the working tree. Do not restore or replace those user deletions as part of unrelated changes.
+The Python backend uses a `src` layout. Place importable code under `src/guojing/`, mirror it under `tests/`, and keep module learning notes under `docs/learning/`. Keep the root `README.md` aligned with the implemented project state and record each completed module in the learning documentation.
 
 Keep HTTP adapters under `src/guojing/api/`, cross-cutting configuration under `src/guojing/core/`, and framework-independent business rules under `src/guojing/domain/`. Domain modules must not import FastAPI, storage clients, or agent frameworks. Prefer immutable domain value objects and deterministic functions whose tests require no I/O. Do not create speculative database, agent, or infrastructure layers before a concrete use case needs them. Keep root-level files for project-wide documentation and configuration.
 
-The scoped `src/.gitignore` and `tests/.gitignore` files exclude generated Python bytecode while the root `.gitignore` remains intentionally absent.
+The root `.gitignore` is the single project-wide source for generated files, local configuration, secrets, Python, Android, Gradle, Node.js, and IDE artifacts. Keep lockfiles such as `uv.lock` tracked.
 
 ## Build, Test, and Development Commands
 
-The backend requires Python 3.12.13 and uv. The root `README.md` remains intentionally absent because of the pre-existing user deletion, so the same commands are currently recorded here and in `docs/learning/00-backend-foundation.md`.
+The backend requires Python 3.12.13 and uv. Keep working setup and validation commands synchronized between this guide and the root `README.md`.
 
 - `uv sync` — create/update `.venv` from `pyproject.toml` and `uv.lock`.
 - `uv run uvicorn guojing.main:app --reload` — run the local API on port 8000.
@@ -33,8 +33,8 @@ Use pytest and files named `test_*.py`. Name tests after behavior, such as `test
 
 ## Commit & Pull Request Guidelines
 
-The history currently contains only `Initial commit`; follow its short, imperative style, for example `Add input validation`. Keep commits focused. Pull requests should explain the change and motivation, list validation performed, link relevant issues, and include screenshots or recordings for user-facing changes.
+Use short imperative commit messages, for example `Add input validation`. Keep commits focused. Pull requests should explain the change and motivation, list validation performed, link relevant issues, and include screenshots or recordings for user-facing changes.
 
 ## Security & Configuration
 
-Never commit secrets, credentials, or `.env` files. Document new dependencies, required environment variables, safe defaults, and generated artifacts alongside the change that introduces them.
+Never commit secrets, credentials, or `.env` files. The root `.gitignore` is a safety net, not a substitute for reviewing staged changes. Document new dependencies, required environment variables, safe defaults, and generated artifacts alongside the change that introduces them. Do not change the repository license without an explicit owner decision.
