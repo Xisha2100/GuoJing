@@ -2,7 +2,7 @@
 
 from enum import StrEnum
 
-from pydantic import Field
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -29,3 +29,5 @@ class Settings(BaseSettings):
     app_name: str = Field(default="老牌子 API", min_length=1)
     environment: AppEnvironment = AppEnvironment.LOCAL
     debug: bool = False
+    database_url: str = Field(default="sqlite:///./data/guojing.db", min_length=1)
+    admin_api_token: SecretStr | None = Field(default=None, min_length=32)

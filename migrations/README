@@ -1,0 +1,3 @@
+Database schema history managed by Alembic.
+
+Run `uv run alembic upgrade head` before starting the API against a new database.

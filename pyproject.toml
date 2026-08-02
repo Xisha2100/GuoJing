@@ -4,9 +4,11 @@ version = "0.1.0"
 description = "Backend API for 老牌子, an in-context smartphone guidance assistant."
 requires-python = ">=3.12,<3.13"
 dependencies = [
+    "alembic>=1.18.5,<2.0.0",
     "fastapi>=0.139.2,<0.140.0",
     "pydantic>=2.13.4,<3.0.0",
     "pydantic-settings>=2.14.2,<3.0.0",
+    "sqlalchemy>=2.0.51,<2.1.0",
     "uvicorn[standard]>=0.51.0,<0.52.0",
 ]
 

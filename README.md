@@ -2,7 +2,7 @@
 
 “老牌子”是一款面向老年人和不熟悉现代智能手机操作方式的辅助应用。它在用户实际操作微信、抖音、打车、导航、网购和系统功能时，提供一步一指引，并把隐私与高风险操作的安全边界放在 AI 之外执行。
 
-> 当前处于早期 MVP 开发阶段。仓库已经具备后端基础骨架和教程状态图领域模型，Android 客户端、管理网页、数据库与 Agent 编排尚未接入。
+> 当前处于早期 MVP 开发阶段。仓库已经具备后端基础骨架、教程状态图，以及教程草稿、发布和只读查询的 SQLite 垂直切片；Android 客户端、管理网页与 Agent 编排尚未接入。
 
 ## 产品方向
 
@@ -29,9 +29,12 @@
 .
 ├── src/guojing/
 │   ├── api/                 # FastAPI HTTP 适配层
+│   ├── application/         # 用例、DTO 与 Repository 端口
 │   ├── core/                # 配置等横切能力
 │   ├── domain/tutorials/    # 教程状态图与确定性业务规则
+│   ├── infrastructure/      # SQLAlchemy / SQLite 适配器
 │   └── main.py              # FastAPI 应用入口
+├── migrations/              # Alembic 数据库结构历史
 ├── tests/                   # 与源码结构对应的测试
 ├── docs/learning/           # 每个模块的学习文档
 ├── pyproject.toml           # Python 项目、依赖和工具配置
@@ -64,8 +67,12 @@ uv sync
 ### 启动 API
 
 ```bash
+export GUOJING_ADMIN_API_TOKEN="$(openssl rand -hex 32)"
+uv run alembic upgrade head
 uv run uvicorn guojing.main:app --reload
 ```
+
+默认数据库位于 `data/guojing.db`。可以通过 `GUOJING_DATABASE_URL` 切换地址。管理写接口在没有配置至少 32 字符的 `GUOJING_ADMIN_API_TOKEN` 时保持关闭；令牌仅是单管理员 MVP 的启动保护，不是最终家属账号系统。项目提供 `.env.example` 作为变量清单，但当前不会自动读取 `.env`，需要由 shell、IDE 或部署平台注入环境变量。
 
 启动后可访问：
 
@@ -119,6 +126,38 @@ uv add --dev <package>
 
 学习文档：[docs/learning/02-repository-hygiene.md](docs/learning/02-repository-hygiene.md)
 
+### 03：教程草稿发布与读取
+
+- 严格且带 `schema_version` 的 Pydantic 教程 DTO。
+- 应用服务与 Repository Protocol 隔离 HTTP 和 SQLAlchemy。
+- SQLite 中保存不可变修订，通过发布指针选择 Android 可见版本。
+- Alembic 首次迁移、管理员 Bearer 保护和公开只读 API。
+
+学习文档：[docs/learning/03-tutorial-publishing-and-storage.md](docs/learning/03-tutorial-publishing-and-storage.md)
+
+## 教程 API
+
+管理端保存草稿：
+
+```http
+POST /api/v1/admin/tutorials/drafts
+Authorization: Bearer <GUOJING_ADMIN_API_TOKEN>
+```
+
+发布明确的修订：
+
+```http
+POST /api/v1/admin/tutorials/{graph_id}/revisions/{revision_number}/publish
+Authorization: Bearer <GUOJING_ADMIN_API_TOKEN>
+```
+
+Android 只会读取已发布内容：
+
+```http
+GET /api/v1/tutorials
+GET /api/v1/tutorials/{graph_id}
+```
+
 ## 隐私与安全原则
 
 - 用户始终亲自点击，老牌子不自动操作第三方 APP。
@@ -140,13 +179,7 @@ uv add --dev <package>
 
 ## 下一步
 
-下一模块计划实现“教程草稿发布与读取”垂直切片：
-
-- 管理端提交教程图的 Pydantic DTO。
-- DTO 与领域对象之间的显式映射。
-- SQLite 草稿和发布版本持久化。
-- 管理端发布 API。
-- Android 只读教程 API。
+下一模块将在确认本模块后设计“教程录制/编辑工作流”：先定义管理端如何逐步生成节点、锚点和转移，再决定网页编辑器与截图标注的数据协议。不会让 AI 生成的草稿绕过人工发布。
 
 ## License
 
