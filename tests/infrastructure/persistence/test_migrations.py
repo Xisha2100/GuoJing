@@ -25,6 +25,7 @@ def test_migration_builds_and_removes_the_schema(
         "tutorials",
         "tutorial_revisions",
         "tutorial_publications",
+        "tutorial_draft_workspaces",
     } <= tables
     with engine.connect() as connection:
         assert connection.exec_driver_sql("PRAGMA journal_mode").scalar_one() == "wal"

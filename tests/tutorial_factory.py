@@ -2,6 +2,10 @@
 
 from dataclasses import replace
 
+from guojing.domain.tutorials.authoring import (
+    DraftTutorialGraph,
+    TutorialDraftDocument,
+)
 from guojing.domain.tutorials.models import (
     ActionKind,
     AnchorRole,
@@ -77,3 +81,17 @@ def make_tutorial_graph(
 
 def with_title(graph: TutorialGraph, title: str) -> TutorialGraph:
     return replace(graph, title=title)
+
+
+def make_complete_draft_document() -> TutorialDraftDocument:
+    graph = make_tutorial_graph()
+    return TutorialDraftDocument(
+        graph=DraftTutorialGraph(
+            graph_id=graph.graph_id,
+            title=graph.title,
+            recorded_app=graph.recorded_app,
+            start_node_id=graph.start_node_id,
+            nodes=graph.nodes,
+            transitions=graph.transitions,
+        )
+    )

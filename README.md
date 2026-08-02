@@ -2,7 +2,7 @@
 
 “老牌子”是一款面向老年人和不熟悉现代智能手机操作方式的辅助应用。它在用户实际操作微信、抖音、打车、导航、网购和系统功能时，提供一步一指引，并把隐私与高风险操作的安全边界放在 AI 之外执行。
 
-> 当前处于早期 MVP 开发阶段。仓库已经具备后端基础骨架、教程状态图，以及教程草稿、发布和只读查询的 SQLite 垂直切片；Android 客户端、管理网页与 Agent 编排尚未接入。
+> 当前处于早期 MVP 开发阶段。仓库已经具备后端基础骨架、教程状态图、版本发布，以及可逐步保存和校验的教程编辑工作区；Android 客户端、管理网页、真实文件存储与 Agent 编排尚未接入。
 
 ## 产品方向
 
@@ -135,7 +135,31 @@ uv add --dev <package>
 
 学习文档：[docs/learning/03-tutorial-publishing-and-storage.md](docs/learning/03-tutorial-publishing-and-storage.md)
 
+### 04：教程录制与编辑工作区
+
+- 不完整编辑文档与可发布正式教程图分离。
+- 截图、Accessibility Tree、OCR 只保存脱敏资源引用，不内嵌大文件。
+- Accessibility、OCR、AI 和人工候选锚点记录来源与管理员复核结果。
+- 使用 `expected_version` 乐观锁防止多个网页标签页静默覆盖。
+- 提升操作原子创建正式修订，但不会自动发布给 Android。
+
+学习文档：[docs/learning/04-tutorial-authoring-workspace.md](docs/learning/04-tutorial-authoring-workspace.md)
+
 ## 教程 API
+
+管理端创建和继续编辑工作区：
+
+```http
+POST /api/v1/admin/tutorial-drafts
+GET  /api/v1/admin/tutorial-drafts
+GET  /api/v1/admin/tutorial-drafts/{workspace_id}
+PUT  /api/v1/admin/tutorial-drafts/{workspace_id}
+POST /api/v1/admin/tutorial-drafts/{workspace_id}/validate
+POST /api/v1/admin/tutorial-drafts/{workspace_id}/promote
+Authorization: Bearer <GUOJING_ADMIN_API_TOKEN>
+```
+
+`PUT` 和 `promote` 必须携带当前 `expected_version`。版本落后时返回 `409`，客户端应重新读取并让管理员决定如何合并。`promote` 只生成未发布的正式修订，仍需调用下面的发布 API。
 
 管理端保存草稿：
 
@@ -179,7 +203,7 @@ GET /api/v1/tutorials/{graph_id}
 
 ## 下一步
 
-下一模块将在确认本模块后设计“教程录制/编辑工作流”：先定义管理端如何逐步生成节点、锚点和转移，再决定网页编辑器与截图标注的数据协议。不会让 AI 生成的草稿绕过人工发布。
+下一模块计划建立轻量管理端身份与操作审计，为 React 编辑网页提供安全的登录会话，并逐步替换不适合直接放进浏览器的共享 Bearer Token。开始前会先说明是否需要新增密码哈希、会话或前端工具依赖。
 
 ## License
 

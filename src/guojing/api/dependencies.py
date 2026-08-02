@@ -6,6 +6,7 @@ from typing import Annotated, cast
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
+from guojing.application.tutorial_drafts.service import TutorialDraftService
 from guojing.application.tutorials.service import TutorialService
 from guojing.core.config import Settings
 
@@ -16,6 +17,11 @@ BearerCredentials = Annotated[HTTPAuthorizationCredentials | None, Depends(_bear
 def get_tutorial_service(request: Request) -> TutorialService:
     """Return the use-case service installed by the composition root."""
     return cast(TutorialService, request.app.state.tutorial_service)
+
+
+def get_tutorial_draft_service(request: Request) -> TutorialDraftService:
+    """Return the incremental authoring service installed at startup."""
+    return cast(TutorialDraftService, request.app.state.tutorial_draft_service)
 
 
 def require_admin(request: Request, credentials: BearerCredentials) -> None:
