@@ -129,7 +129,7 @@ Java 对照：
 
 ### CSRF Cookie
 
-属性基本相同，但 `HttpOnly=false`，因为 React 需要读取它并复制到 `X-CSRF-Token` 请求头。
+`HttpOnly=false`，因为 React 需要读取它并复制到 `X-CSRF-Token` 请求头。它使用 `Path=/`：管理网页和 `/api/v1/admin` API 没有更窄的共同路径，如果也限制为 API Path，位于 `/admin` 的页面脚本将无法读取。Cookie Path 不是权限边界，真正的防护来自随机值与服务端会话摘要的绑定。
 
 本地开发通常是 `http://127.0.0.1`，所以允许 `Secure=false`。这不是生产安全选项：配置模型明确拒绝 staging/production 使用不安全 Cookie。
 

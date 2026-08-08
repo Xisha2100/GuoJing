@@ -18,9 +18,10 @@ from guojing.application.auth.ports import (
 from guojing.application.auth.service import AdminAuthService
 from guojing.core.config import Settings
 from guojing.core.security import (
-    ADMIN_COOKIE_PATH,
     ADMIN_CSRF_COOKIE,
+    ADMIN_CSRF_COOKIE_PATH,
     ADMIN_SESSION_COOKIE,
+    ADMIN_SESSION_COOKIE_PATH,
 )
 from guojing.domain.auth import AuthenticatedAdminSession
 
@@ -83,7 +84,7 @@ def login_admin(
         ADMIN_SESSION_COOKIE,
         grant.session_token,
         max_age=max_age,
-        path=ADMIN_COOKIE_PATH,
+        path=ADMIN_SESSION_COOKIE_PATH,
         secure=settings.admin_cookie_secure,
         httponly=True,
         samesite="strict",
@@ -92,7 +93,7 @@ def login_admin(
         ADMIN_CSRF_COOKIE,
         grant.csrf_token,
         max_age=max_age,
-        path=ADMIN_COOKIE_PATH,
+        path=ADMIN_CSRF_COOKIE_PATH,
         secure=settings.admin_cookie_secure,
         httponly=False,
         samesite="strict",
@@ -112,5 +113,5 @@ def logout_admin(
     auth_service: AuthServiceDependency,
 ) -> None:
     auth_service.logout(context)
-    response.delete_cookie(ADMIN_SESSION_COOKIE, path=ADMIN_COOKIE_PATH)
-    response.delete_cookie(ADMIN_CSRF_COOKIE, path=ADMIN_COOKIE_PATH)
+    response.delete_cookie(ADMIN_SESSION_COOKIE, path=ADMIN_SESSION_COOKIE_PATH)
+    response.delete_cookie(ADMIN_CSRF_COOKIE, path=ADMIN_CSRF_COOKIE_PATH)

@@ -2,7 +2,7 @@
 
 “老牌子”是一款面向老年人和不熟悉现代智能手机操作方式的辅助应用。它在用户实际操作微信、抖音、打车、导航、网购和系统功能时，提供一步一指引，并把隐私与高风险操作的安全边界放在 AI 之外执行。
 
-> 当前处于早期 MVP 开发阶段。仓库已经具备后端基础骨架、教程状态图、版本发布、教程编辑工作区，以及管理端登录会话和操作审计；Android 客户端、管理网页、真实文件存储与 Agent 编排尚未接入。
+> 当前处于早期 MVP 开发阶段。仓库已经具备后端基础骨架、教程状态图、版本发布、教程编辑工作区、管理端认证审计，以及可登录和编辑工作区的 React 管理网页；Android 客户端、真实文件存储与 Agent 编排尚未接入。
 
 ## 产品方向
 
@@ -36,6 +36,7 @@
 │   └── main.py              # FastAPI 应用入口
 ├── migrations/              # Alembic 数据库结构历史
 ├── tests/                   # 与源码结构对应的测试
+├── web/admin/               # React + TypeScript 管理网页
 ├── docs/learning/           # 每个模块的学习文档
 ├── pyproject.toml           # Python 项目、依赖和工具配置
 └── uv.lock                  # 精确依赖锁
@@ -104,6 +105,33 @@ uv add <package>
 uv add --dev <package>
 ```
 
+## 管理网页快速开始
+
+### 环境要求
+
+- Node.js 22.12 或更新版本（当前验证版本为 24.18.0）
+- pnpm 11（项目通过 `packageManager` 固定为 11.7.0）
+
+前端依赖只安装到项目，并由 `web/admin/pnpm-lock.yaml` 锁定；不需要全局安装 Vite、TypeScript、ESLint 或 Vitest。
+
+先按上文启动 FastAPI，然后在另一个终端运行：
+
+```bash
+pnpm --dir web/admin install --frozen-lockfile
+pnpm --dir web/admin dev
+```
+
+打开 <http://127.0.0.1:5173>。Vite 默认把同源 `/api` 请求代理到 <http://127.0.0.1:8000>，因此浏览器不需要额外 CORS 配置，并可直接使用服务端 Session Cookie 与 CSRF Cookie。
+
+前端完整检查与生产构建：
+
+```bash
+pnpm --dir web/admin check
+pnpm --dir web/admin build
+```
+
+生产环境应把 `web/admin/dist/` 静态文件和 `/api` 反向代理部署在同一站点；开发代理不是生产服务器。
+
 ## 已完成模块
 
 ### 00：后端基础骨架
@@ -160,6 +188,16 @@ uv add --dev <package>
 
 学习文档：[docs/learning/05-admin-authentication-and-audit.md](docs/learning/05-admin-authentication-and-audit.md)
 
+### 06：React 管理网页 MVP
+
+- 管理员登录、会话恢复和退出。
+- 工作区列表、新建、完整 JSON 编辑、保存、校验和提升。
+- 类型化 API client 集中处理 Cookie、CSRF 与 HTTP 错误。
+- 将 `409` 乐观锁冲突转化为禁止静默覆盖的界面反馈。
+- Vitest/Testing Library 行为测试与真实浏览器桌面、手机联调。
+
+学习文档：[docs/learning/06-react-admin-web.md](docs/learning/06-react-admin-web.md)
+
 ## 教程 API
 
 管理端先登录；成功响应会设置会话 Cookie 和 CSRF Cookie：
@@ -171,7 +209,7 @@ Content-Type: application/json
 {"username":"admin","password":"..."}
 ```
 
-读取接口由浏览器自动携带 HttpOnly 会话 Cookie。所有 `POST`、`PUT` 等状态变更请求还必须把 `guojing_admin_csrf` Cookie 的值复制到 `X-CSRF-Token` 请求头；后续 React 管理网页会统一封装该行为。
+读取接口由浏览器自动携带 HttpOnly 会话 Cookie。所有 `POST`、`PUT` 等状态变更请求还必须把 `guojing_admin_csrf` Cookie 的值复制到 `X-CSRF-Token` 请求头；React 管理网页已在一个类型化 API client 中统一封装该行为。
 
 管理端创建和继续编辑工作区：
 
@@ -226,7 +264,7 @@ GET /api/v1/tutorials/{graph_id}
 
 ## 下一步
 
-下一模块计划开始轻量 React 管理网页，让管理员可以登录、逐步录入教程工作区、校验并提升正式修订。开始前会先确认 Node.js、pnpm 和前端目录/构建边界，不会直接安装新的全局工具。
+下一模块可在两条产品路线中选择：把 JSON 工作区升级为结构化节点/步骤编辑器，或开始 Android 客户端基础与公开教程目录。进入前会先结合产品验证优先级确认顺序。
 
 ## License
 

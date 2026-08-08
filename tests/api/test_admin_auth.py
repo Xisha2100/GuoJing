@@ -35,9 +35,12 @@ def test_login_sets_scoped_cookie_and_me_uses_server_session(tmp_path: Path) -> 
     assert response.json()["username"] == ADMIN_USERNAME
     set_cookie = response.headers.get_list("set-cookie")
     session_cookie = next(value for value in set_cookie if ADMIN_SESSION_COOKIE in value)
+    csrf_cookie = next(value for value in set_cookie if ADMIN_CSRF_COOKIE in value)
     assert "HttpOnly" in session_cookie
     assert "SameSite=strict" in session_cookie
     assert "Path=/api/v1/admin" in session_cookie
+    assert "HttpOnly" not in csrf_cookie
+    assert "Path=/" in csrf_cookie
     assert me.status_code == 200
 
 
@@ -113,6 +116,15 @@ def test_logout_revokes_session_and_clears_cookies(tmp_path: Path) -> None:
 
     assert logged_out.status_code == 204
     assert me.status_code == 401
+    deleted_cookies = logged_out.headers.get_list("set-cookie")
+    deleted_session = next(
+        value for value in deleted_cookies if value.startswith(f'{ADMIN_SESSION_COOKIE}=""')
+    )
+    deleted_csrf = next(
+        value for value in deleted_cookies if value.startswith(f'{ADMIN_CSRF_COOKIE}=""')
+    )
+    assert "Path=/api/v1/admin" in deleted_session
+    assert "Path=/" in deleted_csrf
 
 
 def test_tutorial_mutation_appends_actor_audit_event(tmp_path: Path) -> None:
