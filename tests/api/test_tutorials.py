@@ -2,73 +2,47 @@
 
 from pathlib import Path
 
-from fastapi.testclient import TestClient
+from tests.auth_helpers import admin_api_client, login_test_admin
 from tests.tutorial_factory import make_tutorial_graph
 
 from guojing.application.tutorials.dto import TutorialGraphDto
-from guojing.application.tutorials.service import TutorialService
-from guojing.core.config import AppEnvironment, Settings
-from guojing.infrastructure.persistence.database import Database
-from guojing.infrastructure.persistence.models import Base
-from guojing.infrastructure.persistence.tutorial_repository import (
-    SqlAlchemyTutorialRepository,
-)
-from guojing.main import create_app
-
-ADMIN_TOKEN = "test-admin-token-that-is-at-least-32-characters"
 
 
-def _client(tmp_path: Path, token: str | None = ADMIN_TOKEN) -> TestClient:
-    database = Database(f"sqlite:///{tmp_path / 'api.db'}")
-    Base.metadata.create_all(database.engine)
-    settings = Settings(
-        environment=AppEnvironment.TEST,
-        database_url=f"sqlite:///{tmp_path / 'unused.db'}",
-        admin_api_token=token,
-    )
-    service = TutorialService(SqlAlchemyTutorialRepository(database))
-    return TestClient(create_app(settings, tutorial_service=service))
-
-
-def _authorization(token: str = ADMIN_TOKEN) -> dict[str, str]:
-    return {"Authorization": f"Bearer {token}"}
-
-
-def test_admin_api_is_disabled_without_a_configured_token(tmp_path: Path) -> None:
-    with _client(tmp_path, token=None) as client:
+def test_admin_write_requires_a_login(tmp_path: Path) -> None:
+    with admin_api_client(tmp_path) as (client, _database, _auth_service):
         response = client.post(
             "/api/v1/admin/tutorials/drafts",
-            json=TutorialGraphDto.from_domain(make_tutorial_graph()).model_dump(mode="json"),
-        )
-
-    assert response.status_code == 503
-
-
-def test_admin_api_rejects_an_invalid_token(tmp_path: Path) -> None:
-    with _client(tmp_path) as client:
-        response = client.post(
-            "/api/v1/admin/tutorials/drafts",
-            headers=_authorization("wrong-token"),
             json=TutorialGraphDto.from_domain(make_tutorial_graph()).model_dump(mode="json"),
         )
 
     assert response.status_code == 401
-    assert response.headers["www-authenticate"] == "Bearer"
+
+
+def test_admin_write_rejects_missing_csrf_header(tmp_path: Path) -> None:
+    with admin_api_client(tmp_path) as (client, _database, _auth_service):
+        login_test_admin(client)
+        response = client.post(
+            "/api/v1/admin/tutorials/drafts",
+            json=TutorialGraphDto.from_domain(make_tutorial_graph()).model_dump(mode="json"),
+        )
+
+    assert response.status_code == 403
 
 
 def test_draft_publish_and_public_read_flow(tmp_path: Path) -> None:
     graph = make_tutorial_graph()
     payload = TutorialGraphDto.from_domain(graph).model_dump(mode="json")
-    with _client(tmp_path) as client:
+    with admin_api_client(tmp_path) as (client, _database, _auth_service):
+        csrf_headers = login_test_admin(client)
         draft_response = client.post(
             "/api/v1/admin/tutorials/drafts",
-            headers=_authorization(),
+            headers=csrf_headers,
             json=payload,
         )
         empty_catalog_response = client.get("/api/v1/tutorials")
         publish_response = client.post(
             f"/api/v1/admin/tutorials/{graph.graph_id}/revisions/1/publish",
-            headers=_authorization(),
+            headers=csrf_headers,
         )
         catalog_response = client.get("/api/v1/tutorials")
         tutorial_response = client.get(f"/api/v1/tutorials/{graph.graph_id}")
@@ -85,10 +59,10 @@ def test_structurally_invalid_graph_returns_all_domain_issues(tmp_path: Path) ->
     payload = TutorialGraphDto.from_domain(make_tutorial_graph()).model_dump(mode="json")
     payload["start_node_id"] = "missing"
     payload["transitions"].append(payload["transitions"][0])
-    with _client(tmp_path) as client:
+    with admin_api_client(tmp_path) as (client, _database, _auth_service):
         response = client.post(
             "/api/v1/admin/tutorials/drafts",
-            headers=_authorization(),
+            headers=login_test_admin(client),
             json=payload,
         )
 
@@ -99,7 +73,7 @@ def test_structurally_invalid_graph_returns_all_domain_issues(tmp_path: Path) ->
 
 
 def test_unpublished_tutorial_returns_not_found(tmp_path: Path) -> None:
-    with _client(tmp_path) as client:
+    with admin_api_client(tmp_path) as (client, _database, _auth_service):
         response = client.get("/api/v1/tutorials/unknown")
 
     assert response.status_code == 404

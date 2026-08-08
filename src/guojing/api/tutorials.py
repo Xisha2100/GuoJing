@@ -6,7 +6,12 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, ConfigDict
 
-from guojing.api.dependencies import get_tutorial_service, require_admin
+from guojing.api.dependencies import (
+    get_admin_auth_service,
+    get_tutorial_service,
+    require_admin,
+)
+from guojing.application.auth.service import AdminAuthService
 from guojing.application.tutorials.dto import TutorialGraphDto
 from guojing.application.tutorials.models import (
     PublishedTutorial,
@@ -18,11 +23,13 @@ from guojing.application.tutorials.ports import (
     TutorialNotFoundError,
 )
 from guojing.application.tutorials.service import TutorialService
+from guojing.domain.auth import AuthenticatedAdminSession
 from guojing.domain.tutorials.validation import InvalidTutorialGraph
 
 router = APIRouter(prefix="/api/v1", tags=["tutorials"])
 TutorialServiceDependency = Annotated[TutorialService, Depends(get_tutorial_service)]
-AdminDependency = Annotated[None, Depends(require_admin)]
+AuthServiceDependency = Annotated[AdminAuthService, Depends(get_admin_auth_service)]
+AdminMutationDependency = Annotated[AuthenticatedAdminSession, Depends(require_admin)]
 
 
 class ApiModel(BaseModel):
@@ -90,9 +97,16 @@ class PublishedTutorialResponse(ApiModel):
 def create_tutorial_draft(
     graph: TutorialGraphDto,
     service: TutorialServiceDependency,
-    _admin: AdminDependency,
+    admin: AdminMutationDependency,
+    auth_service: AuthServiceDependency,
 ) -> TutorialRevisionResponse:
     """Validate and append one immutable tutorial revision."""
+    auth_service.record_action(
+        admin,
+        "tutorial_revision.create_requested",
+        "tutorial",
+        graph.graph_id,
+    )
     try:
         revision = service.save_draft(graph.to_domain())
     except InvalidTutorialGraph as error:
@@ -124,9 +138,17 @@ def publish_tutorial_revision(
     graph_id: str,
     revision_number: int,
     service: TutorialServiceDependency,
-    _admin: AdminDependency,
+    admin: AdminMutationDependency,
+    auth_service: AuthServiceDependency,
 ) -> PublishedTutorialResponse:
     """Move the public pointer to one explicit revision."""
+    auth_service.record_action(
+        admin,
+        "tutorial_revision.publish_requested",
+        "tutorial",
+        graph_id,
+        {"revision_number": revision_number},
+    )
     try:
         published = service.publish(graph_id, revision_number)
     except (TutorialNotFoundError, ValueError) as error:

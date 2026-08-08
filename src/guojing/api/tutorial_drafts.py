@@ -6,7 +6,13 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field
 
-from guojing.api.dependencies import get_tutorial_draft_service, require_admin
+from guojing.api.dependencies import (
+    get_admin_auth_service,
+    get_tutorial_draft_service,
+    require_admin,
+    require_admin_session,
+)
+from guojing.application.auth.service import AdminAuthService
 from guojing.application.tutorial_drafts.dto import TutorialDraftDocumentDto
 from guojing.application.tutorial_drafts.models import (
     DraftPromotion,
@@ -19,6 +25,7 @@ from guojing.application.tutorial_drafts.ports import (
 )
 from guojing.application.tutorial_drafts.service import TutorialDraftService
 from guojing.application.tutorials.ports import TutorialIdentityConflictError
+from guojing.domain.auth import AuthenticatedAdminSession
 from guojing.domain.tutorials.authoring import (
     IncompleteTutorialDraft,
     TutorialDraftWorkspace,
@@ -27,7 +34,12 @@ from guojing.domain.tutorials.validation import InvalidTutorialGraph
 
 router = APIRouter(prefix="/api/v1/admin/tutorial-drafts", tags=["tutorial authoring"])
 DraftServiceDependency = Annotated[TutorialDraftService, Depends(get_tutorial_draft_service)]
-AdminDependency = Annotated[None, Depends(require_admin)]
+AuthServiceDependency = Annotated[AdminAuthService, Depends(get_admin_auth_service)]
+AdminSessionDependency = Annotated[
+    AuthenticatedAdminSession,
+    Depends(require_admin_session),
+]
+AdminMutationDependency = Annotated[AuthenticatedAdminSession, Depends(require_admin)]
 
 
 class AuthoringApiModel(BaseModel):
@@ -151,8 +163,15 @@ class PromotionResponse(AuthoringApiModel):
 def create_workspace(
     request: CreateWorkspaceRequest,
     service: DraftServiceDependency,
-    _admin: AdminDependency,
+    admin: AdminMutationDependency,
+    auth_service: AuthServiceDependency,
 ) -> WorkspaceResponse:
+    auth_service.record_action(
+        admin,
+        "tutorial_workspace.create_requested",
+        "tutorial_draft_workspace",
+        None,
+    )
     workspace = service.create(request.document.to_domain())
     return WorkspaceResponse.from_domain(workspace)
 
@@ -160,7 +179,7 @@ def create_workspace(
 @router.get("", response_model=list[WorkspaceSummaryResponse])
 def list_workspaces(
     service: DraftServiceDependency,
-    _admin: AdminDependency,
+    _admin: AdminSessionDependency,
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
 ) -> list[WorkspaceSummaryResponse]:
     return [
@@ -172,7 +191,7 @@ def list_workspaces(
 def get_workspace(
     workspace_id: str,
     service: DraftServiceDependency,
-    _admin: AdminDependency,
+    _admin: AdminSessionDependency,
 ) -> WorkspaceResponse:
     try:
         return WorkspaceResponse.from_domain(service.get(workspace_id))
@@ -185,8 +204,16 @@ def replace_workspace(
     workspace_id: str,
     request: ReplaceWorkspaceRequest,
     service: DraftServiceDependency,
-    _admin: AdminDependency,
+    admin: AdminMutationDependency,
+    auth_service: AuthServiceDependency,
 ) -> WorkspaceResponse:
+    auth_service.record_action(
+        admin,
+        "tutorial_workspace.replace_requested",
+        "tutorial_draft_workspace",
+        workspace_id,
+        {"expected_version": request.expected_version},
+    )
     try:
         workspace = service.replace(
             workspace_id,
@@ -204,7 +231,7 @@ def replace_workspace(
 def validate_workspace(
     workspace_id: str,
     service: DraftServiceDependency,
-    _admin: AdminDependency,
+    _admin: AdminMutationDependency,
 ) -> ReadinessResponse:
     try:
         workspace = service.get(workspace_id)
@@ -221,8 +248,16 @@ def promote_workspace(
     workspace_id: str,
     request: PromoteWorkspaceRequest,
     service: DraftServiceDependency,
-    _admin: AdminDependency,
+    admin: AdminMutationDependency,
+    auth_service: AuthServiceDependency,
 ) -> PromotionResponse:
+    auth_service.record_action(
+        admin,
+        "tutorial_workspace.promote_requested",
+        "tutorial_draft_workspace",
+        workspace_id,
+        {"expected_version": request.expected_version},
+    )
     try:
         promotion = service.promote(workspace_id, request.expected_version)
     except TutorialDraftWorkspaceNotFoundError as error:

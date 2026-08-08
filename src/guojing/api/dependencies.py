@@ -1,17 +1,25 @@
 """FastAPI dependency adapters for application services and admin security."""
 
-from hmac import compare_digest
 from typing import Annotated, cast
 
-from fastapi import Depends, HTTPException, Request, status
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi import Depends, Header, HTTPException, Request, status
 
+from guojing.application.auth.ports import (
+    InvalidAdminSessionError,
+    InvalidCsrfTokenError,
+)
+from guojing.application.auth.service import AdminAuthService
 from guojing.application.tutorial_drafts.service import TutorialDraftService
 from guojing.application.tutorials.service import TutorialService
-from guojing.core.config import Settings
+from guojing.core.security import ADMIN_CSRF_COOKIE, ADMIN_CSRF_HEADER, ADMIN_SESSION_COOKIE
+from guojing.domain.auth import AuthenticatedAdminSession
 
-_bearer = HTTPBearer(auto_error=False)
-BearerCredentials = Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)]
+CsrfHeader = Annotated[str | None, Header(alias=ADMIN_CSRF_HEADER)]
+
+
+def get_admin_auth_service(request: Request) -> AdminAuthService:
+    """Return the administrator authentication service installed at startup."""
+    return cast(AdminAuthService, request.app.state.admin_auth_service)
 
 
 def get_tutorial_service(request: Request) -> TutorialService:
@@ -24,21 +32,40 @@ def get_tutorial_draft_service(request: Request) -> TutorialDraftService:
     return cast(TutorialDraftService, request.app.state.tutorial_draft_service)
 
 
-def require_admin(request: Request, credentials: BearerCredentials) -> None:
-    """Protect bootstrap admin writes; disabled is safer than an open endpoint."""
-    settings = cast(Settings, request.app.state.settings)
-    configured_token = settings.admin_api_token
-    if configured_token is None:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="admin API is disabled until GUOJING_ADMIN_API_TOKEN is configured",
-        )
-    if credentials is None or not compare_digest(
-        credentials.credentials,
-        configured_token.get_secret_value(),
-    ):
+def require_admin_session(request: Request) -> AuthenticatedAdminSession:
+    """Resolve the opaque HttpOnly cookie through server-side session state."""
+    auth_service = get_admin_auth_service(request)
+    try:
+        return auth_service.authenticate(request.cookies.get(ADMIN_SESSION_COOKIE, ""))
+    except InvalidAdminSessionError as error:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="invalid admin bearer token",
-            headers={"WWW-Authenticate": "Bearer"},
+            detail="administrator login is required",
+        ) from error
+
+
+AdminContextDependency = Annotated[
+    AuthenticatedAdminSession,
+    Depends(require_admin_session),
+]
+
+
+def require_admin(
+    request: Request,
+    context: AdminContextDependency,
+    csrf_header: CsrfHeader = None,
+) -> AuthenticatedAdminSession:
+    """Require a live session plus double-submit CSRF proof for mutations."""
+    auth_service = get_admin_auth_service(request)
+    try:
+        auth_service.require_csrf(
+            context,
+            request.cookies.get(ADMIN_CSRF_COOKIE, ""),
+            csrf_header or "",
         )
+    except InvalidCsrfTokenError as error:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="valid CSRF cookie and header are required",
+        ) from error
+    return context

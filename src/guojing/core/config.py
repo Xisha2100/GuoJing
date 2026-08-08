@@ -2,7 +2,7 @@
 
 from enum import StrEnum
 
-from pydantic import Field, SecretStr
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -30,4 +30,14 @@ class Settings(BaseSettings):
     environment: AppEnvironment = AppEnvironment.LOCAL
     debug: bool = False
     database_url: str = Field(default="sqlite:///./data/guojing.db", min_length=1)
-    admin_api_token: SecretStr | None = Field(default=None, min_length=32)
+    admin_cookie_secure: bool = False
+    admin_session_ttl_minutes: int = Field(default=480, ge=15, le=1440)
+    admin_login_window_minutes: int = Field(default=15, ge=1, le=60)
+    admin_maximum_login_failures: int = Field(default=5, ge=1, le=20)
+
+    @model_validator(mode="after")
+    def require_secure_admin_cookie_outside_local_environments(self) -> "Settings":
+        if self.environment in {AppEnvironment.STAGING, AppEnvironment.PRODUCTION}:
+            if not self.admin_cookie_secure:
+                raise ValueError("admin_cookie_secure must be true in staging and production")
+        return self

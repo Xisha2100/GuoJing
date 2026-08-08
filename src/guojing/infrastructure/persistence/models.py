@@ -3,10 +3,12 @@
 from datetime import datetime
 
 from sqlalchemy import (
+    Boolean,
     CheckConstraint,
     DateTime,
     ForeignKey,
     ForeignKeyConstraint,
+    Index,
     String,
     Text,
     UniqueConstraint,
@@ -89,3 +91,59 @@ class TutorialDraftWorkspaceRecord(Base):
     promoted_revision_number: Mapped[int | None] = mapped_column(nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class AdminUserRecord(Base):
+    __tablename__ = "admin_users"
+
+    user_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    username: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    password_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class AdminSessionRecord(Base):
+    __tablename__ = "admin_sessions"
+    __table_args__ = (CheckConstraint("expires_at > created_at", name="ck_admin_session_expiry"),)
+
+    session_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    admin_user_id: Mapped[str] = mapped_column(
+        ForeignKey("admin_users.user_id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    session_token_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    csrf_token_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class AdminLoginAttemptRecord(Base):
+    __tablename__ = "admin_login_attempts"
+    __table_args__ = (Index("ix_admin_login_attempt_username_time", "username", "occurred_at"),)
+
+    attempt_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    username: Mapped[str] = mapped_column(String(64), nullable=False)
+    succeeded: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class AdminAuditEventRecord(Base):
+    __tablename__ = "admin_audit_events"
+    __table_args__ = (Index("ix_admin_audit_event_occurred_at", "occurred_at"),)
+
+    event_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    admin_user_id: Mapped[str | None] = mapped_column(
+        ForeignKey("admin_users.user_id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    action: Mapped[str] = mapped_column(String(120), nullable=False)
+    resource_type: Mapped[str] = mapped_column(String(120), nullable=False)
+    resource_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    details_json: Mapped[str] = mapped_column(Text, nullable=False)

@@ -2,7 +2,7 @@
 
 “老牌子”是一款面向老年人和不熟悉现代智能手机操作方式的辅助应用。它在用户实际操作微信、抖音、打车、导航、网购和系统功能时，提供一步一指引，并把隐私与高风险操作的安全边界放在 AI 之外执行。
 
-> 当前处于早期 MVP 开发阶段。仓库已经具备后端基础骨架、教程状态图、版本发布，以及可逐步保存和校验的教程编辑工作区；Android 客户端、管理网页、真实文件存储与 Agent 编排尚未接入。
+> 当前处于早期 MVP 开发阶段。仓库已经具备后端基础骨架、教程状态图、版本发布、教程编辑工作区，以及管理端登录会话和操作审计；Android 客户端、管理网页、真实文件存储与 Agent 编排尚未接入。
 
 ## 产品方向
 
@@ -67,12 +67,18 @@ uv sync
 ### 启动 API
 
 ```bash
-export GUOJING_ADMIN_API_TOKEN="$(openssl rand -hex 32)"
 uv run alembic upgrade head
+uv run python -m guojing.cli create-admin --username admin
 uv run uvicorn guojing.main:app --reload
 ```
 
-默认数据库位于 `data/guojing.db`。可以通过 `GUOJING_DATABASE_URL` 切换地址。管理写接口在没有配置至少 32 字符的 `GUOJING_ADMIN_API_TOKEN` 时保持关闭；令牌仅是单管理员 MVP 的启动保护，不是最终家属账号系统。项目提供 `.env.example` 作为变量清单，但当前不会自动读取 `.env`，需要由 shell、IDE 或部署平台注入环境变量。
+默认数据库位于 `data/guojing.db`，可以通过 `GUOJING_DATABASE_URL` 切换地址。首次迁移后，CLI 会交互式读取并确认管理员密码，密码不会出现在命令行参数或 shell 历史中。忘记密码时可运行：
+
+```bash
+uv run python -m guojing.cli reset-admin-password --username admin
+```
+
+管理 API 使用服务端会话、HttpOnly Cookie 和 CSRF 校验。`GUOJING_ADMIN_COOKIE_SECURE=false` 只适用于本地 HTTP；staging/production 必须设置为 `true` 并通过 HTTPS 访问，否则配置校验会拒绝启动。项目提供 `.env.example` 作为变量清单，但当前不会自动读取 `.env`，需要由 shell、IDE 或部署平台注入环境变量。
 
 启动后可访问：
 
@@ -145,7 +151,27 @@ uv add --dev <package>
 
 学习文档：[docs/learning/04-tutorial-authoring-workspace.md](docs/learning/04-tutorial-authoring-workspace.md)
 
+### 05：管理端身份认证与安全审计
+
+- Argon2id 自适应密码哈希与交互式管理员 CLI。
+- 数据库仅保存摘要的服务端不透明会话，支持固定过期和主动撤销。
+- HttpOnly、SameSite、Secure Cookie 与双提交 CSRF 防护。
+- 持久化登录节流、统一认证错误和关键操作审计。
+
+学习文档：[docs/learning/05-admin-authentication-and-audit.md](docs/learning/05-admin-authentication-and-audit.md)
+
 ## 教程 API
+
+管理端先登录；成功响应会设置会话 Cookie 和 CSRF Cookie：
+
+```http
+POST /api/v1/admin/auth/login
+Content-Type: application/json
+
+{"username":"admin","password":"..."}
+```
+
+读取接口由浏览器自动携带 HttpOnly 会话 Cookie。所有 `POST`、`PUT` 等状态变更请求还必须把 `guojing_admin_csrf` Cookie 的值复制到 `X-CSRF-Token` 请求头；后续 React 管理网页会统一封装该行为。
 
 管理端创建和继续编辑工作区：
 
@@ -156,7 +182,6 @@ GET  /api/v1/admin/tutorial-drafts/{workspace_id}
 PUT  /api/v1/admin/tutorial-drafts/{workspace_id}
 POST /api/v1/admin/tutorial-drafts/{workspace_id}/validate
 POST /api/v1/admin/tutorial-drafts/{workspace_id}/promote
-Authorization: Bearer <GUOJING_ADMIN_API_TOKEN>
 ```
 
 `PUT` 和 `promote` 必须携带当前 `expected_version`。版本落后时返回 `409`，客户端应重新读取并让管理员决定如何合并。`promote` 只生成未发布的正式修订，仍需调用下面的发布 API。
@@ -165,14 +190,12 @@ Authorization: Bearer <GUOJING_ADMIN_API_TOKEN>
 
 ```http
 POST /api/v1/admin/tutorials/drafts
-Authorization: Bearer <GUOJING_ADMIN_API_TOKEN>
 ```
 
 发布明确的修订：
 
 ```http
 POST /api/v1/admin/tutorials/{graph_id}/revisions/{revision_number}/publish
-Authorization: Bearer <GUOJING_ADMIN_API_TOKEN>
 ```
 
 Android 只会读取已发布内容：
@@ -203,7 +226,7 @@ GET /api/v1/tutorials/{graph_id}
 
 ## 下一步
 
-下一模块计划建立轻量管理端身份与操作审计，为 React 编辑网页提供安全的登录会话，并逐步替换不适合直接放进浏览器的共享 Bearer Token。开始前会先说明是否需要新增密码哈希、会话或前端工具依赖。
+下一模块计划开始轻量 React 管理网页，让管理员可以登录、逐步录入教程工作区、校验并提升正式修订。开始前会先确认 Node.js、pnpm 和前端目录/构建边界，不会直接安装新的全局工具。
 
 ## License
 

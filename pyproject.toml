@@ -5,6 +5,7 @@ description = "Backend API for 老牌子, an in-context smartphone guidance assi
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "alembic>=1.18.5,<2.0.0",
+    "argon2-cffi>=25.1.0,<26.0.0",
     "fastapi>=0.139.2,<0.140.0",
     "pydantic>=2.13.4,<3.0.0",
     "pydantic-settings>=2.14.2,<3.0.0",
