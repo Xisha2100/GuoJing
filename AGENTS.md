@@ -6,6 +6,8 @@ The Python backend uses a `src` layout. Place importable code under `src/guojing
 
 The React management app lives under `web/admin/`. Keep browser API adapters under `src/api/`, feature components in feature folders such as `src/auth/` and `src/workspaces/`, and colocate frontend behavior tests as `*.test.ts` or `*.test.tsx`. Generated `dist`, coverage, Playwright, and TypeScript build-info artifacts remain ignored; track `web/admin/pnpm-lock.yaml`.
 
+The Android client lives under `android/app/`. Keep backend protocol and network code under `data/`, immutable client models under `model/`, and Compose screens plus ViewModels under feature packages in `ui/`. UI depends on repository interfaces rather than HTTP implementations. Keep Gradle Wrapper files and `gradle/libs.versions.toml` tracked; never commit `local.properties`, `.gradle/`, build outputs, APKs, emulator state, or screenshots.
+
 Keep HTTP adapters under `src/guojing/api/`, use cases and ports under `src/guojing/application/`, cross-cutting configuration under `src/guojing/core/`, framework-independent business rules under `src/guojing/domain/`, and external adapters under `src/guojing/infrastructure/`. Dependencies point inward: domain modules must not import FastAPI, SQLAlchemy, storage clients, or agent frameworks, and application services depend on repository protocols rather than concrete adapters. Prefer immutable domain value objects and deterministic functions whose tests require no I/O. Do not create speculative database, agent, or infrastructure layers before a concrete use case needs them. Keep root-level files for project-wide documentation and configuration.
 
 The root `.gitignore` is the single project-wide source for generated files, local configuration, secrets, Python, Android, Gradle, Node.js, and IDE artifacts. Keep lockfiles such as `uv.lock` tracked.
@@ -31,6 +33,13 @@ The management web app requires Node.js 22.12 or newer and pnpm 11:
 - `pnpm --dir web/admin check` — run Prettier, ESLint, TypeScript, Vitest, and production build checks.
 - `pnpm --dir web/admin build` — emit production static assets under ignored `web/admin/dist/`.
 
+The Android app requires JDK 17, Android SDK Platform 37, and Build Tools 37.0.0. Use its checked-in Wrapper; do not require a global Gradle or Kotlin installation:
+
+- `cd android && ./gradlew testDebugUnitTest` — run JVM unit tests without a device.
+- `cd android && ./gradlew lintDebug` — run Android static analysis.
+- `cd android && ./gradlew assembleDebug assembleDebugAndroidTest` — build application and instrumentation-test APKs.
+- `cd android && ./gradlew connectedDebugAndroidTest` — run Compose tests on a connected device or booted AVD.
+
 Use `uv add <package>` or `uv add --dev <package>` to change declared dependencies; do not mutate the project environment with `pip install`.
 
 ## Coding Style & Naming Conventions
@@ -39,11 +48,15 @@ Follow PEP 8 with four-space indentation. Use `snake_case` for modules, function
 
 Frontend TypeScript is strict. Use `PascalCase` for React components, keep network and Cookie behavior inside the typed API client, use semantic HTML and accessible labels, and do not duplicate CSRF logic in feature components. Prettier and ESLint configuration live under `web/admin/`.
 
+Android Kotlin follows standard Kotlin naming and four-space continuation indentation. Keep Compose functions small and state-hoisted, expose immutable `StateFlow` from ViewModels, collect it with lifecycle awareness, and model loading, empty, content, and failure states explicitly. Debug cleartext exceptions belong only in `src/debug`; release endpoints must use HTTPS.
+
 ## Testing Guidelines
 
 Use pytest and files named `test_*.py`. Name tests after behavior, such as `test_rejects_empty_input`. Mirror source modules in the test tree. Cover normal, boundary, and failure paths, and include regression tests with bug fixes. Backend tests must not require network access, paid models, or a running database unless explicitly marked as integration tests.
 
 Use Vitest and React Testing Library for frontend behavior. Test observable user flows and HTTP contracts rather than component implementation details. Real-browser Playwright checks are a local integration/visual gate and must use temporary data; do not commit their generated artifacts.
+
+Use JUnit for Android JVM tests and Compose UI Test for device behavior. JSON contracts, repositories, and ViewModels must remain testable without Android runtime or network access. Run device tests for user-visible semantics and interaction, then inspect a real emulator screenshot for major layout changes; do not commit generated screenshots unless explicitly requested as product documentation.
 
 ## Commit & Pull Request Guidelines
 

@@ -2,7 +2,7 @@
 
 “老牌子”是一款面向老年人和不熟悉现代智能手机操作方式的辅助应用。它在用户实际操作微信、抖音、打车、导航、网购和系统功能时，提供一步一指引，并把隐私与高风险操作的安全边界放在 AI 之外执行。
 
-> 当前处于早期 MVP 开发阶段。仓库已经具备后端基础骨架、教程状态图、版本发布、教程编辑工作区、管理端认证审计，以及可登录和编辑工作区的 React 管理网页；Android 客户端、真实文件存储与 Agent 编排尚未接入。
+> 当前处于早期 MVP 开发阶段。仓库已经具备后端基础骨架、教程状态图、版本发布、教程编辑工作区、管理端认证审计、React 管理网页，以及能够读取公开教程目录的 Android 客户端基础；教程逐步执行、真实文件存储与 Agent 编排尚未接入。
 
 ## 产品方向
 
@@ -36,6 +36,7 @@
 │   └── main.py              # FastAPI 应用入口
 ├── migrations/              # Alembic 数据库结构历史
 ├── tests/                   # 与源码结构对应的测试
+├── android/                 # Kotlin + Jetpack Compose 老年用户客户端
 ├── web/admin/               # React + TypeScript 管理网页
 ├── docs/learning/           # 每个模块的学习文档
 ├── pyproject.toml           # Python 项目、依赖和工具配置
@@ -132,6 +133,45 @@ pnpm --dir web/admin build
 
 生产环境应把 `web/admin/dist/` 静态文件和 `/api` 反向代理部署在同一站点；开发代理不是生产服务器。
 
+## Android 客户端快速开始
+
+### 环境要求
+
+- JDK 17
+- Android SDK Platform 37、Build Tools 37.0.0 与 Platform Tools
+- Android Studio 或命令行 SDK 工具
+- 设备测试需要 API 36 ARM64 系统镜像和 AVD；当前验证设备为 `Pixel_7`
+
+项目通过 `android/gradlew` 固定 Gradle 9.4.1，通过 Version Catalog 固定 AGP、Kotlin 编译器插件和 AndroidX 版本。无需全局安装 Gradle 或 Kotlin。
+
+先启动 FastAPI，再构建和安装 Debug 应用：
+
+```bash
+uv run alembic upgrade head
+uv run uvicorn guojing.main:app --reload
+cd android
+./gradlew installDebug
+```
+
+Android 模拟器通过 `http://10.0.2.2:8000` 访问宿主机 FastAPI。若本机 8000 端口被占用，可让后端监听其他端口，并仅在本次构建覆盖 Debug 地址：
+
+```bash
+./gradlew installDebug \
+  -PGUOJING_DEBUG_API_BASE_URL=http://10.0.2.2:18000
+```
+
+`http` 明文访问只在 Debug Manifest 中开放；Release 默认使用不可路由的 `https://api.invalid`，部署时必须通过 `-PGUOJING_API_BASE_URL=https://...` 提供真实 HTTPS 地址。
+
+Android 检查命令：
+
+```bash
+cd android
+./gradlew testDebugUnitTest lintDebug assembleDebug assembleDebugAndroidTest
+./gradlew connectedDebugAndroidTest
+```
+
+第二条命令要求已有完成启动的 Android 设备或模拟器。
+
 ## 已完成模块
 
 ### 00：后端基础骨架
@@ -197,6 +237,16 @@ pnpm --dir web/admin build
 - Vitest/Testing Library 行为测试与真实浏览器桌面、手机联调。
 
 学习文档：[docs/learning/06-react-admin-web.md](docs/learning/06-react-admin-web.md)
+
+### 07：Android 客户端基础与教程目录
+
+- Gradle Wrapper、Version Catalog、AGP 9 内建 Kotlin 和 Compose 工程基础。
+- 公开教程 HTTP 数据源、严格 JSON 边界、Repository 与单向数据流 ViewModel。
+- 加载、内容、空数据、失败重试四类确定性界面状态。
+- 大字号、清晰层级、安全区与 TalkBack 标题语义等适老化基础。
+- JVM 单元测试、Lint、APK 构建和 Pixel 7 设备端 Compose 测试。
+
+学习文档：[docs/learning/07-android-client-foundation.md](docs/learning/07-android-client-foundation.md)
 
 ## 教程 API
 
@@ -264,7 +314,7 @@ GET /api/v1/tutorials/{graph_id}
 
 ## 下一步
 
-下一模块可在两条产品路线中选择：把 JSON 工作区升级为结构化节点/步骤编辑器，或开始 Android 客户端基础与公开教程目录。进入前会先结合产品验证优先级确认顺序。
+下一模块将从教程目录进入教程详情与逐步执行会话，读取已发布状态图，并建立“当前页面识别 → 单步提示 → 用户操作 → 下一状态验证”的客户端骨架；实现前仍会先确认所需环境和模块边界。
 
 ## License
 
