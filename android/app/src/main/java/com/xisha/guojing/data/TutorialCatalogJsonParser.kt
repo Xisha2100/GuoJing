@@ -3,6 +3,7 @@ package com.xisha.guojing.data
 import com.xisha.guojing.model.TutorialSummary
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonPrimitive
@@ -39,7 +40,12 @@ internal class TutorialCatalogJsonParser(
     }
 
     private fun JsonObject.requiredString(name: String, index: Int): String {
-        val value = this[name]?.jsonPrimitive?.content
+        val element = this[name]
+        val value = if (element == null || element is JsonNull) {
+            null
+        } else {
+            element.jsonPrimitive.content
+        }
         if (value.isNullOrBlank()) {
             throw TutorialCatalogFormatException(
                 "Tutorial at index $index has no non-empty '$name'",

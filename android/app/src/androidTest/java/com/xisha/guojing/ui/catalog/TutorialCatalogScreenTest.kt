@@ -21,6 +21,7 @@ class TutorialCatalogScreenTest {
                 TutorialCatalogScreen(
                     uiState = TutorialCatalogUiState.Content(listOf(TUTORIAL)),
                     onRetry = {},
+                    onTutorialSelected = {},
                 )
             }
         }
@@ -38,6 +39,7 @@ class TutorialCatalogScreenTest {
                 TutorialCatalogScreen(
                     uiState = TutorialCatalogUiState.Error,
                     onRetry = { retried = true },
+                    onTutorialSelected = {},
                 )
             }
         }

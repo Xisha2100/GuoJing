@@ -2,7 +2,7 @@
 
 “老牌子”是一款面向老年人和不熟悉现代智能手机操作方式的辅助应用。它在用户实际操作微信、抖音、打车、导航、网购和系统功能时，提供一步一指引，并把隐私与高风险操作的安全边界放在 AI 之外执行。
 
-> 当前处于早期 MVP 开发阶段。仓库已经具备后端基础骨架、教程状态图、版本发布、教程编辑工作区、管理端认证审计、React 管理网页，以及能够读取公开教程目录的 Android 客户端基础；教程逐步执行、真实文件存储与 Agent 编排尚未接入。
+> 当前处于早期 MVP 开发阶段。仓库已经具备后端基础骨架、教程状态图、版本发布、教程编辑工作区、管理端认证审计、React 管理网页，以及能够读取公开教程并以演示模式逐步执行的 Android 客户端；第三方 APP 页面观察、真实文件存储与 Agent 编排尚未接入。
 
 ## 产品方向
 
@@ -248,6 +248,17 @@ cd android
 
 学习文档：[docs/learning/07-android-client-foundation.md](docs/learning/07-android-client-foundation.md)
 
+### 08：Android 教程详情与逐步执行
+
+- 读取和校验完整的已发布教程状态图，而不是把图静默扁平化为列表。
+- Navigation Compose 串联目录、详情和执行状态，并正确处理返回栈。
+- 纯 Kotlin 执行引擎逐节点前进，UI 不能绕过安全策略改写进度。
+- 多分支、循环、过期节点和数据损坏安全暂停；金融与不可逆步骤硬拦截。
+- 明确标注当前为手动确认的演示模式，不冒充已验证第三方 APP 页面。
+- 27 个 JVM 测试、6 个 Pixel 7 设备测试和真实 FastAPI 临时数据库联调。
+
+学习文档：[docs/learning/08-android-tutorial-execution.md](docs/learning/08-android-tutorial-execution.md)
+
 ## 教程 API
 
 管理端先登录；成功响应会设置会话 Cookie 和 CSRF Cookie：
@@ -314,7 +325,7 @@ GET /api/v1/tutorials/{graph_id}
 
 ## 下一步
 
-下一模块将从教程目录进入教程详情与逐步执行会话，读取已发布状态图，并建立“当前页面识别 → 单步提示 → 用户操作 → 下一状态验证”的客户端骨架；实现前仍会先确认所需环境和模块边界。
+下一模块将建立 Android 页面观察基础：由用户明确开启 AccessibilityService，在本地提取当前前台 APP、语义节点与屏幕状态证据，并严格执行 `network_allowed`、`local_only`、`capture_paused` 隐私模式。箭头悬浮层、截图/OCR 和 Agent 仍会作为后续独立模块；实现前会先确认权限体验、环境和安全边界。
 
 ## License
 

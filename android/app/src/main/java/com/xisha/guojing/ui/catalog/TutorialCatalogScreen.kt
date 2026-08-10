@@ -39,6 +39,7 @@ import com.xisha.guojing.model.TutorialSummary
 fun TutorialCatalogScreen(
     uiState: TutorialCatalogUiState,
     onRetry: () -> Unit,
+    onTutorialSelected: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Surface(
@@ -55,7 +56,10 @@ fun TutorialCatalogScreen(
                 TutorialCatalogUiState.Loading -> LoadingContent()
                 TutorialCatalogUiState.Empty -> EmptyContent()
                 TutorialCatalogUiState.Error -> ErrorContent(onRetry)
-                is TutorialCatalogUiState.Content -> TutorialList(uiState.tutorials)
+                is TutorialCatalogUiState.Content -> TutorialList(
+                    tutorials = uiState.tutorials,
+                    onTutorialSelected = onTutorialSelected,
+                )
             }
         }
     }
@@ -160,7 +164,10 @@ private fun ErrorContent(onRetry: () -> Unit) {
 }
 
 @Composable
-private fun TutorialList(tutorials: List<TutorialSummary>) {
+private fun TutorialList(
+    tutorials: List<TutorialSummary>,
+    onTutorialSelected: (String) -> Unit,
+) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 32.dp),
@@ -179,14 +186,21 @@ private fun TutorialList(tutorials: List<TutorialSummary>) {
             items = tutorials,
             key = { it.graphId },
         ) { tutorial ->
-            TutorialCard(tutorial)
+            TutorialCard(
+                tutorial = tutorial,
+                onClick = { onTutorialSelected(tutorial.graphId) },
+            )
         }
     }
 }
 
 @Composable
-private fun TutorialCard(tutorial: TutorialSummary) {
+private fun TutorialCard(
+    tutorial: TutorialSummary,
+    onClick: () -> Unit,
+) {
     Card(
+        onClick = onClick,
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(20.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -210,6 +224,11 @@ private fun TutorialCard(tutorial: TutorialSummary) {
                 color = MaterialTheme.colorScheme.primary,
                 style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.Bold,
+            )
+            Text(
+                text = "查看步骤",
+                color = MaterialTheme.colorScheme.primary,
+                style = MaterialTheme.typography.labelLarge,
             )
         }
     }

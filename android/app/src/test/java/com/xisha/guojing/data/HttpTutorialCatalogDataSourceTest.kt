@@ -19,12 +19,11 @@ class HttpTutorialCatalogDataSourceTest {
         )
         var requestedUrl: URL? = null
         val dataSource = HttpTutorialCatalogDataSource(
-            baseUrl = "http://10.0.2.2:8000/",
-            parser = TutorialCatalogJsonParser(),
-            connectionFactory = { url ->
+            client = HttpJsonClient("http://10.0.2.2:8000/") { url ->
                 requestedUrl = url
                 connection
             },
+            parser = TutorialCatalogJsonParser(),
         )
 
         val tutorials = dataSource.fetchPublishedTutorials()
@@ -36,19 +35,18 @@ class HttpTutorialCatalogDataSourceTest {
     }
 
     @Test
-    fun reports_http_status_and_disconnects() = runTest {
+    fun reports_http_status_and_disconnects() {
         val connection = FakeHttpURLConnection(
             responseStatus = 503,
             responseBody = "temporarily unavailable",
         )
         val dataSource = HttpTutorialCatalogDataSource(
-            baseUrl = "http://localhost:8000",
+            client = HttpJsonClient("http://localhost:8000") { connection },
             parser = TutorialCatalogJsonParser(),
-            connectionFactory = { connection },
         )
 
-        val error = assertThrows(TutorialCatalogHttpException::class.java) {
-            kotlinx.coroutines.test.runTest {
+        val error = assertThrows(TutorialHttpException::class.java) {
+            runTest {
                 dataSource.fetchPublishedTutorials()
             }
         }

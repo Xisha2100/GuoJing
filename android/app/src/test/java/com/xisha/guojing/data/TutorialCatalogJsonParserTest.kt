@@ -59,4 +59,23 @@ class TutorialCatalogJsonParserTest {
 
         assertEquals("Tutorial at index 0 has no non-empty 'title'", error.message)
     }
+
+    @Test
+    fun rejects_null_required_string() {
+        assertThrows(TutorialCatalogFormatException::class.java) {
+            parser.parse(
+                """
+                [{
+                  "graph_id": null,
+                  "title": "微信打电话",
+                  "package_name": "com.tencent.mm",
+                  "recorded_version_name": "8.0.60",
+                  "recorded_version_code": 2800,
+                  "revision_number": 3,
+                  "published_at": "2026-08-09T07:00:00Z"
+                }]
+                """.trimIndent(),
+            )
+        }
+    }
 }
