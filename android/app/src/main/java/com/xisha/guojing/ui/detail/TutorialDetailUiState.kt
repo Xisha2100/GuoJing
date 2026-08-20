@@ -19,5 +19,25 @@ sealed interface TutorialDetailMode {
 
     data class Execution(
         val stage: TutorialExecutionStage,
+        val pageObservation: PageObservationStatus = PageObservationStatus.NotStarted,
     ) : TutorialDetailMode
+}
+
+sealed interface PageObservationStatus {
+    data object NotStarted : PageObservationStatus
+
+    data object WaitingForTargetApp : PageObservationStatus
+
+    data object CapturePaused : PageObservationStatus
+
+    data class Matched(
+        val score: Double,
+        val localOnly: Boolean,
+    ) : PageObservationStatus
+
+    data class Uncertain(
+        val score: Double,
+    ) : PageObservationStatus
+
+    data object Mismatch : PageObservationStatus
 }

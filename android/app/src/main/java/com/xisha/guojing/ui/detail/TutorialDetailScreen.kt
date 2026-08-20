@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -24,6 +25,10 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.heading
@@ -46,6 +51,8 @@ fun TutorialDetailScreen(
     onStartTutorial: () -> Unit,
     onConfirmStepCompleted: () -> Unit,
     onExitExecution: () -> Unit,
+    pageObservationServiceEnabled: Boolean = false,
+    onOpenAccessibilitySettings: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     Surface(
@@ -65,9 +72,13 @@ fun TutorialDetailScreen(
                     TutorialDetailMode.Overview -> TutorialOverview(
                         uiState = uiState,
                         onStartTutorial = onStartTutorial,
+                        pageObservationServiceEnabled = pageObservationServiceEnabled,
+                        onOpenAccessibilitySettings = onOpenAccessibilitySettings,
                     )
                     is TutorialDetailMode.Execution -> TutorialExecution(
                         stage = mode.stage,
+                        pageObservation = mode.pageObservation,
+                        pageObservationServiceEnabled = pageObservationServiceEnabled,
                         onConfirmStepCompleted = onConfirmStepCompleted,
                         onExitExecution = onExitExecution,
                     )
@@ -104,7 +115,10 @@ private fun DetailTopBar(onBack: () -> Unit) {
 private fun TutorialOverview(
     uiState: TutorialDetailUiState.Content,
     onStartTutorial: () -> Unit,
+    pageObservationServiceEnabled: Boolean,
+    onOpenAccessibilitySettings: () -> Unit,
 ) {
+    var showDisclosure by remember { mutableStateOf(false) }
     val tutorial = uiState.tutorial
     val graph = tutorial.graph
     Column(
@@ -128,11 +142,27 @@ private fun TutorialOverview(
             title = "这个教程怎样工作？",
             body = "每次只显示一个操作。你亲自完成后，再点击“我已完成这一步”。",
         )
-        InfoCard(
-            title = "当前是演示模式",
-            body = "老牌子还没有自动观察其他 APP 的页面，因此现在不会判断你是否点对了位置。",
-            emphasized = true,
-        )
+        if (pageObservationServiceEnabled) {
+            InfoCard(
+                title = "页面观察已开启",
+                body = "开始教程后，老牌子只在本机识别目标 APP 的页面控件，不会替你点击。",
+                emphasized = true,
+            )
+        } else {
+            InfoCard(
+                title = "页面观察尚未开启",
+                body = "不开启也能查看步骤；开启后，老牌子可以在本地提示当前页面是否匹配。",
+                emphasized = true,
+            )
+            OutlinedButton(
+                onClick = { showDisclosure = true },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(56.dp),
+            ) {
+                Text("了解并开启页面观察")
+            }
+        }
         Text(
             text = "共 ${graph.transitions.size} 个已录制操作，教程修订 ${tutorial.revisionNumber}",
             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -148,11 +178,22 @@ private fun TutorialOverview(
         }
         Spacer(Modifier.height(12.dp))
     }
+    if (showDisclosure) {
+        PageObservationDisclosure(
+            onDismiss = { showDisclosure = false },
+            onConsent = {
+                showDisclosure = false
+                onOpenAccessibilitySettings()
+            },
+        )
+    }
 }
 
 @Composable
 private fun TutorialExecution(
     stage: TutorialExecutionStage,
+    pageObservation: PageObservationStatus,
+    pageObservationServiceEnabled: Boolean,
     onConfirmStepCompleted: () -> Unit,
     onExitExecution: () -> Unit,
 ) {
@@ -164,7 +205,12 @@ private fun TutorialExecution(
         verticalArrangement = Arrangement.spacedBy(18.dp),
     ) {
         when (stage) {
-            is TutorialExecutionStage.Step -> StepContent(stage, onConfirmStepCompleted)
+            is TutorialExecutionStage.Step -> StepContent(
+                stage = stage,
+                pageObservation = pageObservation,
+                pageObservationServiceEnabled = pageObservationServiceEnabled,
+                onConfirmStepCompleted = onConfirmStepCompleted,
+            )
             is TutorialExecutionStage.Completed -> CompletedContent(stage)
             is TutorialExecutionStage.Blocked -> BlockedContent(stage)
         }
@@ -189,6 +235,8 @@ private fun TutorialExecution(
 @Composable
 private fun StepContent(
     stage: TutorialExecutionStage.Step,
+    pageObservation: PageObservationStatus,
+    pageObservationServiceEnabled: Boolean,
     onConfirmStepCompleted: () -> Unit,
 ) {
     Text(
@@ -212,6 +260,7 @@ private fun StepContent(
         body = stage.transition.actionKind.userFacingLabel(),
     )
     PrivacyNotice(stage.node.privacyMode)
+    PageObservationNotice(pageObservation, pageObservationServiceEnabled)
     if (stage.node.verificationStatus == VerificationStatus.Provisional) {
         InfoCard(
             title = "这个页面仍在复核",
@@ -234,6 +283,64 @@ private fun StepContent(
     ) {
         Text("我已完成这一步")
     }
+}
+
+@Composable
+private fun PageObservationNotice(
+    status: PageObservationStatus,
+    serviceEnabled: Boolean,
+) {
+    val (title, body) = when {
+        !serviceEnabled -> "页面观察未开启" to "你仍可手动查看步骤，但老牌子无法确认当前页面。"
+        status == PageObservationStatus.NotStarted ->
+            "页面观察正在准备" to "打开教程对应的 APP 后，老牌子才会读取页面证据。"
+        status == PageObservationStatus.WaitingForTargetApp ->
+            "等待目标 APP" to "请切换到教程对应的 APP；其他 APP 的页面不会被读取。"
+        status == PageObservationStatus.CapturePaused ->
+            "页面观察已暂停" to "这个步骤可能包含密码或验证码，老牌子不会读取页面节点。"
+        status is PageObservationStatus.Matched -> {
+            val privacy = if (status.localOnly) "证据只保留在本机。" else "只生成脱敏后的锚点证据。"
+            "当前页面匹配" to "已找到教程需要的页面控件。$privacy"
+        }
+        status is PageObservationStatus.Uncertain ->
+            "暂时无法确认页面" to "页面控件不够完整，请检查是否打开了正确页面。"
+        status == PageObservationStatus.Mismatch ->
+            "当前页面不匹配" to "请不要继续重复操作，先返回教程要求的页面。"
+        else -> error("unhandled page observation status")
+    }
+    InfoCard(
+        title = title,
+        body = body,
+        emphasized = status !is PageObservationStatus.Matched,
+    )
+}
+
+@Composable
+private fun PageObservationDisclosure(
+    onDismiss: () -> Unit,
+    onConsent: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("开启前请先了解") },
+        text = {
+            Text(
+                "页面观察会在你主动运行教程时读取目标 APP 的按钮、文字标签和控件位置，" +
+                    "用于判断当前页面是否与教程一致。老牌子不会替你点击，不会读取密码控件，" +
+                    "也不会保存完整页面内容；标记为“仅本地”的证据不会上传。你可以随时在系统设置中关闭。",
+            )
+        },
+        confirmButton = {
+            Button(onClick = onConsent) {
+                Text("我同意，前往设置")
+            }
+        },
+        dismissButton = {
+            OutlinedButton(onClick = onDismiss) {
+                Text("暂不开启")
+            }
+        },
+    )
 }
 
 @Composable

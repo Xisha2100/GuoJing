@@ -2,9 +2,18 @@ package com.xisha.guojing.ui.detail
 
 import com.xisha.guojing.data.TutorialDetailRepository
 import com.xisha.guojing.execution.TutorialExecutionStage
+import com.xisha.guojing.observation.AnchorEvidence
+import com.xisha.guojing.observation.ObservationRequest
+import com.xisha.guojing.observation.ObservationSharingPolicy
+import com.xisha.guojing.observation.ObservationState
+import com.xisha.guojing.observation.ObservedApp
+import com.xisha.guojing.observation.ScreenObservation
+import com.xisha.guojing.observation.ScreenObservationPort
 import com.xisha.guojing.testTutorialDetail
 import com.xisha.guojing.ui.catalog.MainDispatcherRule
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -75,6 +84,45 @@ class TutorialDetailViewModelTest {
     }
 
     @Test
+    fun execution_requests_current_node_and_maps_sanitized_evidence() =
+        runTest(mainDispatcherRule.dispatcher) {
+            val observationPort = FakeObservationPort()
+            val detail = testTutorialDetail()
+            val viewModel = TutorialDetailViewModel(
+                graphId = "wechat_open_family_chat",
+                repository = TutorialDetailRepository { detail },
+                observationPort = observationPort,
+            )
+            advanceUntilIdle()
+
+            viewModel.startTutorial()
+
+            val request = observationPort.lastRequest!!
+            assertEquals("chat_list", request.nodeId)
+            assertEquals("com.tencent.mm", request.targetPackageName)
+
+            observationPort.publish(
+                ScreenObservation(
+                    request = request,
+                    app = ObservedApp("com.tencent.mm", "8.0.60", 2600),
+                    anchorEvidence = listOf(
+                        AnchorEvidence(request.anchors.single().anchorId, 1.0),
+                    ),
+                    structureScore = 1.0,
+                    sharingPolicy = ObservationSharingPolicy.LocalOnly,
+                ),
+            )
+            advanceUntilIdle()
+
+            val content = viewModel.uiState.value as TutorialDetailUiState.Content
+            val execution = content.mode as TutorialDetailMode.Execution
+            assertEquals(
+                PageObservationStatus.Matched(score = 0.90, localOnly = true),
+                execution.pageObservation,
+            )
+        }
+
+    @Test
     fun retry_recovers_after_loading_failure() = runTest(mainDispatcherRule.dispatcher) {
         var attempt = 0
         val viewModel = TutorialDetailViewModel(
@@ -91,5 +139,24 @@ class TutorialDetailViewModelTest {
         advanceUntilIdle()
 
         assertTrue(viewModel.uiState.value is TutorialDetailUiState.Content)
+    }
+
+    private class FakeObservationPort : ScreenObservationPort {
+        private val mutableState = MutableStateFlow<ObservationState>(ObservationState.Idle)
+        override val state: StateFlow<ObservationState> = mutableState
+        var lastRequest: ObservationRequest? = null
+
+        override fun observe(request: ObservationRequest) {
+            lastRequest = request
+            mutableState.value = ObservationState.Waiting(request)
+        }
+
+        override fun stop() {
+            mutableState.value = ObservationState.Idle
+        }
+
+        fun publish(observation: ScreenObservation) {
+            mutableState.value = ObservationState.Available(observation)
+        }
     }
 }

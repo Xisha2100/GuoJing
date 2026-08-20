@@ -13,6 +13,8 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.xisha.guojing.data.TutorialCatalogRepository
 import com.xisha.guojing.data.TutorialDetailRepository
+import com.xisha.guojing.observation.DisabledScreenObservationPort
+import com.xisha.guojing.observation.ScreenObservationPort
 import com.xisha.guojing.ui.catalog.TutorialCatalogScreen
 import com.xisha.guojing.ui.catalog.TutorialCatalogViewModel
 import com.xisha.guojing.ui.detail.TutorialDetailMode
@@ -24,6 +26,9 @@ import com.xisha.guojing.ui.detail.TutorialDetailViewModel
 fun GuoJingApp(
     catalogRepository: TutorialCatalogRepository,
     detailRepository: TutorialDetailRepository,
+    observationPort: ScreenObservationPort = DisabledScreenObservationPort,
+    pageObservationServiceEnabled: Boolean = false,
+    onOpenAccessibilitySettings: () -> Unit = {},
 ) {
     val navController = rememberNavController()
     NavHost(
@@ -57,7 +62,11 @@ fun GuoJingApp(
             )
             val detailViewModel: TutorialDetailViewModel = viewModel(
                 key = "tutorial-detail-$graphId",
-                factory = TutorialDetailViewModel.factory(graphId, detailRepository),
+                factory = TutorialDetailViewModel.factory(
+                    graphId,
+                    detailRepository,
+                    observationPort,
+                ),
             )
             val uiState by detailViewModel.uiState.collectAsStateWithLifecycle()
             val isExecuting = (
@@ -80,6 +89,8 @@ fun GuoJingApp(
                 onStartTutorial = detailViewModel::startTutorial,
                 onConfirmStepCompleted = detailViewModel::confirmStepCompleted,
                 onExitExecution = detailViewModel::exitExecution,
+                pageObservationServiceEnabled = pageObservationServiceEnabled,
+                onOpenAccessibilitySettings = onOpenAccessibilitySettings,
             )
         }
     }

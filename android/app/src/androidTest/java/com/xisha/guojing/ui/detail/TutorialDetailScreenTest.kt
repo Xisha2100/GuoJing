@@ -20,7 +20,7 @@ class TutorialDetailScreenTest {
     val composeRule = createComposeRule()
 
     @Test
-    fun overview_explains_demo_mode_and_starts() {
+    fun overview_explains_optional_page_observation_and_starts() {
         var started = false
         composeRule.setContent {
             GuoJingTheme {
@@ -35,10 +35,34 @@ class TutorialDetailScreenTest {
             }
         }
 
-        composeRule.onNodeWithText("当前是演示模式").assertIsDisplayed()
+        composeRule.onNodeWithText("页面观察尚未开启").assertIsDisplayed()
         composeRule.onNodeWithText("开始查看步骤").performClick()
 
         assertTrue(started)
+    }
+
+    @Test
+    fun disclosure_requires_affirmative_consent_before_opening_settings() {
+        var openedSettings = false
+        composeRule.setContent {
+            GuoJingTheme {
+                TutorialDetailScreen(
+                    uiState = TutorialDetailUiState.Content(androidTestDetail()),
+                    onBack = {},
+                    onRetry = {},
+                    onStartTutorial = {},
+                    onConfirmStepCompleted = {},
+                    onExitExecution = {},
+                    onOpenAccessibilitySettings = { openedSettings = true },
+                )
+            }
+        }
+
+        composeRule.onNodeWithText("了解并开启页面观察").performClick()
+        composeRule.onNodeWithText("开启前请先了解").assertIsDisplayed()
+        composeRule.onNodeWithText("我同意，前往设置").performClick()
+
+        assertTrue(openedSettings)
     }
 
     @Test
@@ -64,6 +88,39 @@ class TutorialDetailScreenTest {
         composeRule.onNodeWithText("第 1 步").assertIsDisplayed()
         composeRule.onNodeWithText("点击“家人”聊天").assertIsDisplayed()
         composeRule.onNodeWithText("我已完成这一步").assertIsDisplayed()
+        composeRule.onNodeWithText("页面观察未开启").assertIsDisplayed()
+    }
+
+    @Test
+    fun matched_local_observation_is_explained_without_exposing_content() {
+        val stage = TutorialExecutionEngine(androidTestDetail().graph).start()
+            as TutorialExecutionStage.Step
+        composeRule.setContent {
+            GuoJingTheme {
+                TutorialDetailScreen(
+                    uiState = TutorialDetailUiState.Content(
+                        tutorial = androidTestDetail(),
+                        mode = TutorialDetailMode.Execution(
+                            stage = stage,
+                            pageObservation = PageObservationStatus.Matched(
+                                score = 1.0,
+                                localOnly = true,
+                            ),
+                        ),
+                    ),
+                    onBack = {},
+                    onRetry = {},
+                    onStartTutorial = {},
+                    onConfirmStepCompleted = {},
+                    onExitExecution = {},
+                    pageObservationServiceEnabled = true,
+                )
+            }
+        }
+
+        composeRule.onNodeWithText("当前页面匹配").assertIsDisplayed()
+        composeRule.onNodeWithText("已找到教程需要的页面控件。证据只保留在本机。")
+            .assertIsDisplayed()
     }
 
     @Test

@@ -1,4 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">老牌子</string>
+    <string name="accessibility_service_label">老牌子页面观察</string>
+    <string name="accessibility_service_description">仅在你主动查看教程时，本地识别目标应用的页面控件，帮助判断教程步骤是否匹配。不会替你点击。</string>
 </resources>

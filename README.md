@@ -259,6 +259,17 @@ cd android
 
 学习文档：[docs/learning/08-android-tutorial-execution.md](docs/learning/08-android-tutorial-execution.md)
 
+### 09：Android 本地页面观察
+
+- 声明最小事件范围的 `AccessibilityService`，由用户在独立披露后主动前往系统设置开启。
+- 仅在教程执行期间注册观察请求，并在读取节点树前校验目标包名和隐私模式。
+- `capture_paused` 完全不读取节点树，密码节点不提取文字，`local_only` 证据只能留在内存和本机。
+- 原始语义节点即时转换成 `anchor_id + confidence + structure_score`，不保存聊天、联系人或余额文本。
+- Kotlin 页面匹配规则与后端 Python 参考实现保持同一阈值和权重，输出 matched / uncertain / mismatch。
+- 40 个 JVM 测试、8 个 Pixel 7 设备测试、Android Lint 和 APK 构建通过。
+
+学习文档：[docs/learning/09-android-page-observation.md](docs/learning/09-android-page-observation.md)
+
 ## 教程 API
 
 管理端先登录；成功响应会设置会话 Cookie 和 CSRF Cookie：
@@ -325,7 +336,7 @@ GET /api/v1/tutorials/{graph_id}
 
 ## 下一步
 
-下一模块将建立 Android 页面观察基础：由用户明确开启 AccessibilityService，在本地提取当前前台 APP、语义节点与屏幕状态证据，并严格执行 `network_allowed`、`local_only`、`capture_paused` 隐私模式。箭头悬浮层、截图/OCR 和 Agent 仍会作为后续独立模块；实现前会先确认权限体验、环境和安全边界。
+下一模块将建立跨 APP 的可见引导层：根据已匹配目标锚点的脱敏坐标绘制框选、箭头和大字步骤卡，并在用户操作后观察目标节点，只有下一页面证据匹配才推进低风险步骤。高风险操作仍由确定性策略暂停；截图/OCR 和 Agent 会继续作为后续独立模块。
 
 ## License
 
