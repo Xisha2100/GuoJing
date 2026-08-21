@@ -27,7 +27,7 @@ class SemanticObservationBuilderTest {
             ),
         )!!
 
-        assertEquals(0.90, observation.anchorEvidence.single().confidence, 0.001)
+        assertEquals(1.0, observation.anchorEvidence.single().confidence, 0.001)
         assertEquals(ObservationSharingPolicy.LocalOnly, observation.sharingPolicy)
         assertEquals(1.0, observation.structureScore, 0.001)
     }
@@ -82,6 +82,23 @@ class SemanticObservationBuilderTest {
             ObservationSharingPolicy.SanitizedNetworkAllowed,
             observation.sharingPolicy,
         )
+    }
+
+    @Test
+    fun matched_anchor_keeps_only_its_normalized_bounds() {
+        val bounds = NormalizedScreenBounds(0.1, 0.2, 0.8, 0.3)
+
+        val observation = builder.build(
+            request = request(PrivacyMode.LocalOnly),
+            app = observedApp(),
+            nodes = listOf(
+                SemanticNodeSnapshot(null, null, "其他内容", null),
+                SemanticNodeSnapshot(null, null, "微信聊天列表", bounds),
+            ),
+        )!!
+
+        assertEquals(bounds, observation.anchorEvidence.single().normalizedBounds)
+        assertEquals(1.0, observation.anchorEvidence.single().confidence, 0.001)
     }
 
     @Test

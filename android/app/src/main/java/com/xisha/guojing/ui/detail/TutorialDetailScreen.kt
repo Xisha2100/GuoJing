@@ -78,6 +78,7 @@ fun TutorialDetailScreen(
                     is TutorialDetailMode.Execution -> TutorialExecution(
                         stage = mode.stage,
                         pageObservation = mode.pageObservation,
+                        transitionVerification = mode.transitionVerification,
                         pageObservationServiceEnabled = pageObservationServiceEnabled,
                         onConfirmStepCompleted = onConfirmStepCompleted,
                         onExitExecution = onExitExecution,
@@ -140,7 +141,7 @@ private fun TutorialOverview(
         )
         InfoCard(
             title = "这个教程怎样工作？",
-            body = "每次只显示一个操作。你亲自完成后，再点击“我已完成这一步”。",
+            body = "每次只显示一个操作。开启页面观察后，老牌子会跨 APP 框选目标，并在你操作后确认结果。",
         )
         if (pageObservationServiceEnabled) {
             InfoCard(
@@ -193,6 +194,7 @@ private fun TutorialOverview(
 private fun TutorialExecution(
     stage: TutorialExecutionStage,
     pageObservation: PageObservationStatus,
+    transitionVerification: TransitionVerificationStatus,
     pageObservationServiceEnabled: Boolean,
     onConfirmStepCompleted: () -> Unit,
     onExitExecution: () -> Unit,
@@ -208,6 +210,7 @@ private fun TutorialExecution(
             is TutorialExecutionStage.Step -> StepContent(
                 stage = stage,
                 pageObservation = pageObservation,
+                transitionVerification = transitionVerification,
                 pageObservationServiceEnabled = pageObservationServiceEnabled,
                 onConfirmStepCompleted = onConfirmStepCompleted,
             )
@@ -236,6 +239,7 @@ private fun TutorialExecution(
 private fun StepContent(
     stage: TutorialExecutionStage.Step,
     pageObservation: PageObservationStatus,
+    transitionVerification: TransitionVerificationStatus,
     pageObservationServiceEnabled: Boolean,
     onConfirmStepCompleted: () -> Unit,
 ) {
@@ -261,6 +265,7 @@ private fun StepContent(
     )
     PrivacyNotice(stage.node.privacyMode)
     PageObservationNotice(pageObservation, pageObservationServiceEnabled)
+    TransitionVerificationNotice(transitionVerification, pageObservationServiceEnabled)
     if (stage.node.verificationStatus == VerificationStatus.Provisional) {
         InfoCard(
             title = "这个页面仍在复核",
@@ -277,12 +282,40 @@ private fun StepContent(
     }
     Button(
         onClick = onConfirmStepCompleted,
+        enabled = !pageObservationServiceEnabled ||
+            transitionVerification == TransitionVerificationStatus.Ready,
         modifier = Modifier
             .fillMaxWidth()
             .height(60.dp),
     ) {
-        Text("我已完成这一步")
+        Text(
+            if (pageObservationServiceEnabled) {
+                "我已操作，切回目标 APP 确认"
+            } else {
+                "我已完成这一步（手动）"
+            },
+        )
     }
+}
+
+@Composable
+private fun TransitionVerificationNotice(
+    status: TransitionVerificationStatus,
+    serviceEnabled: Boolean,
+) {
+    if (!serviceEnabled || status == TransitionVerificationStatus.Ready) return
+    val (title, body) = when (status) {
+        TransitionVerificationStatus.Ready -> return
+        is TransitionVerificationStatus.CheckingTarget -> "正在确认操作结果" to
+            "已获得 ${status.matchedObservations}/${status.requiredObservations} 次稳定页面证据。请不要重复操作。"
+        TransitionVerificationStatus.TargetUncertain -> "结果还不够确定" to
+            "老牌子会继续观察目标页面。请等待，不要再次点击同一个按钮。"
+        TransitionVerificationStatus.TargetMismatch -> "没有到达预期页面" to
+            "请不要重复操作；返回教程要求的页面，或退出本次教程。"
+        TransitionVerificationStatus.CapturePaused -> "目标页面禁止观察" to
+            "页面可能包含密码或验证码，老牌子已停止读取，也不会自动完成这一步。"
+    }
+    InfoCard(title = title, body = body, emphasized = true)
 }
 
 @Composable

@@ -1,12 +1,11 @@
 package com.xisha.guojing.observation
 
-import com.xisha.guojing.model.NormalizedBounds
 import com.xisha.guojing.model.AnchorRole
+import com.xisha.guojing.model.NormalizedBounds
 import com.xisha.guojing.model.PrivacyMode
 import com.xisha.guojing.model.ScreenAnchor
 import com.xisha.guojing.model.SemanticLocator
 import kotlin.math.abs
-import kotlin.math.max
 
 /** Converts an ephemeral semantic tree into evidence that contains no raw screen text. */
 class SemanticObservationBuilder {
@@ -19,9 +18,14 @@ class SemanticObservationBuilder {
         if (app.packageName != request.targetPackageName) return null
 
         val evidence = request.anchors.map { anchor ->
+            val bestNode = nodes.maxByOrNull { node -> confidence(anchor, node) }
+            val confidence = bestNode?.let { confidence(anchor, it) } ?: 0.0
             AnchorEvidence(
                 anchorId = anchor.anchorId,
-                confidence = nodes.maxOfOrNull { node -> confidence(anchor, node) } ?: 0.0,
+                confidence = confidence,
+                normalizedBounds = bestNode
+                    ?.normalizedBounds
+                    ?.takeIf { confidence >= ANCHOR_PRESENCE_THRESHOLD },
             )
         }
         val structuralAnchorIds = request.anchors
@@ -60,10 +64,8 @@ class SemanticObservationBuilder {
     ): Double {
         var confidence = 0.0
         if (sameIdentifier(locator.resourceId, node.resourceId)) confidence = 1.0
-        if (sameText(locator.contentDescription, node.contentDescription)) {
-            confidence = max(confidence, 0.95)
-        }
-        if (sameText(locator.text, node.text)) confidence = max(confidence, 0.90)
+        if (sameText(locator.contentDescription, node.contentDescription)) confidence = 1.0
+        if (sameText(locator.text, node.text)) confidence = 1.0
         // OCR text is intentionally ignored: AccessibilityService is not an OCR source.
         return confidence
     }

@@ -37,8 +37,8 @@ class ScreenMatcherTest {
         )
         val nodeWithForbidden = node.copy(anchors = node.anchors + forbidden)
         val evidence = listOf(
-            AnchorEvidence(node.anchors.single().anchorId, 1.0),
-            AnchorEvidence("password", 0.95),
+            AnchorEvidence(node.anchors.single().anchorId, 1.0, null),
+            AnchorEvidence("password", 0.95, null),
         )
 
         val result = matchScreen(
@@ -76,7 +76,9 @@ class ScreenMatcherTest {
         return ScreenObservation(
             request = request,
             app = ObservedApp("com.tencent.mm", "8.0.60", 2600),
-            anchorEvidence = listOf(AnchorEvidence(node.anchors.single().anchorId, confidence)),
+            anchorEvidence = listOf(
+                AnchorEvidence(node.anchors.single().anchorId, confidence, null),
+            ),
             structureScore = structure,
             sharingPolicy = ObservationSharingPolicy.LocalOnly,
         )

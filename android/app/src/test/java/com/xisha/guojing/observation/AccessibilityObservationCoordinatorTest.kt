@@ -42,7 +42,7 @@ class AccessibilityObservationCoordinatorTest {
         AccessibilityObservationCoordinator.publish(observation)
 
         assertEquals(
-            ObservationState.Available(observation),
+            ObservationState.Available(sequence = 1, observation = observation),
             AccessibilityObservationCoordinator.state.value,
         )
     }

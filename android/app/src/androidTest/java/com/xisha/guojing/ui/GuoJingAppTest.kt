@@ -43,7 +43,7 @@ class GuoJingAppTest {
         composeRule.onNodeWithText("开始查看步骤").performClick()
         composeRule.onNodeWithText("点击“家人”聊天").assertIsDisplayed()
 
-        composeRule.onNodeWithText("我已完成这一步").performClick()
+        composeRule.onNodeWithText("我已完成这一步（手动）").performClick()
         composeRule.onNodeWithText("教程已完成").assertIsDisplayed()
     }
 }

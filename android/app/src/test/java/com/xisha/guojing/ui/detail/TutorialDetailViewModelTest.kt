@@ -2,10 +2,14 @@ package com.xisha.guojing.ui.detail
 
 import com.xisha.guojing.data.TutorialDetailRepository
 import com.xisha.guojing.execution.TutorialExecutionStage
+import com.xisha.guojing.guidance.GuidanceOverlayCommand
+import com.xisha.guojing.guidance.GuidanceOverlayPort
+import com.xisha.guojing.guidance.GuidanceOverlayState
 import com.xisha.guojing.observation.AnchorEvidence
 import com.xisha.guojing.observation.ObservationRequest
 import com.xisha.guojing.observation.ObservationSharingPolicy
 import com.xisha.guojing.observation.ObservationState
+import com.xisha.guojing.observation.NormalizedScreenBounds
 import com.xisha.guojing.observation.ObservedApp
 import com.xisha.guojing.observation.ScreenObservation
 import com.xisha.guojing.observation.ScreenObservationPort
@@ -106,7 +110,7 @@ class TutorialDetailViewModelTest {
                     request = request,
                     app = ObservedApp("com.tencent.mm", "8.0.60", 2600),
                     anchorEvidence = listOf(
-                        AnchorEvidence(request.anchors.single().anchorId, 1.0),
+                        AnchorEvidence(request.anchors.single().anchorId, 1.0, null),
                     ),
                     structureScore = 1.0,
                     sharingPolicy = ObservationSharingPolicy.LocalOnly,
@@ -121,6 +125,134 @@ class TutorialDetailViewModelTest {
                 execution.pageObservation,
             )
         }
+
+    @Test
+    fun matched_source_page_shows_non_touching_guidance_with_anchor_bounds() =
+        runTest(mainDispatcherRule.dispatcher) {
+            val observationPort = FakeObservationPort()
+            val overlayPort = FakeOverlayPort()
+            val viewModel = TutorialDetailViewModel(
+                graphId = "wechat_open_family_chat",
+                repository = TutorialDetailRepository { testTutorialDetail() },
+                observationPort = observationPort,
+                overlayPort = overlayPort,
+            )
+            advanceUntilIdle()
+            viewModel.startTutorial()
+            val bounds = NormalizedScreenBounds(0.1, 0.2, 0.7, 0.3)
+
+            observationPort.publish(matchingObservation(observationPort.lastRequest!!, bounds))
+            advanceUntilIdle()
+
+            assertEquals(bounds, overlayPort.lastCommand?.targetBounds)
+            assertEquals("点击“家人”聊天", overlayPort.lastCommand?.instruction)
+        }
+
+    @Test
+    fun observed_mode_requires_two_consecutive_target_matches_before_advancing() =
+        runTest(mainDispatcherRule.dispatcher) {
+            val observationPort = FakeObservationPort()
+            val viewModel = TutorialDetailViewModel(
+                graphId = "wechat_open_family_chat",
+                repository = TutorialDetailRepository { testTutorialDetail() },
+                observationPort = observationPort,
+            )
+            advanceUntilIdle()
+            viewModel.startTutorial()
+
+            viewModel.confirmStepCompleted(requirePageVerification = true)
+            val targetRequest = observationPort.lastRequest!!
+            assertEquals("conversation", targetRequest.nodeId)
+
+            observationPort.publish(matchingObservation(targetRequest))
+            advanceUntilIdle()
+            var execution = currentExecution(viewModel)
+            assertTrue(execution.stage is TutorialExecutionStage.Step)
+            assertEquals(
+                TransitionVerificationStatus.CheckingTarget(1, 2),
+                execution.transitionVerification,
+            )
+
+            observationPort.publish(matchingObservation(targetRequest))
+            advanceUntilIdle()
+            execution = currentExecution(viewModel)
+            assertTrue(execution.stage is TutorialExecutionStage.Completed)
+        }
+
+    @Test
+    fun uncertain_target_never_advances_or_encourages_a_repeat() =
+        runTest(mainDispatcherRule.dispatcher) {
+            val observationPort = FakeObservationPort()
+            val viewModel = TutorialDetailViewModel(
+                graphId = "wechat_open_family_chat",
+                repository = TutorialDetailRepository { testTutorialDetail() },
+                observationPort = observationPort,
+            )
+            advanceUntilIdle()
+            viewModel.startTutorial()
+            viewModel.confirmStepCompleted(requirePageVerification = true)
+            val targetRequest = observationPort.lastRequest!!
+
+            observationPort.publish(matchingObservation(targetRequest, confidence = 0.0))
+            advanceUntilIdle()
+
+            val execution = currentExecution(viewModel)
+            assertTrue(execution.stage is TutorialExecutionStage.Step)
+            assertEquals(
+                TransitionVerificationStatus.TargetUncertain,
+                execution.transitionVerification,
+            )
+        }
+
+    @Test
+    fun mismatched_target_package_never_advances() = runTest(mainDispatcherRule.dispatcher) {
+        val observationPort = FakeObservationPort()
+        val viewModel = TutorialDetailViewModel(
+            graphId = "wechat_open_family_chat",
+            repository = TutorialDetailRepository { testTutorialDetail() },
+            observationPort = observationPort,
+        )
+        advanceUntilIdle()
+        viewModel.startTutorial()
+        viewModel.confirmStepCompleted(requirePageVerification = true)
+        val targetRequest = observationPort.lastRequest!!
+
+        observationPort.publish(
+            matchingObservation(targetRequest, appPackage = "com.example.wrong"),
+        )
+        advanceUntilIdle()
+
+        val execution = currentExecution(viewModel)
+        assertTrue(execution.stage is TutorialExecutionStage.Step)
+        assertEquals(
+            TransitionVerificationStatus.TargetMismatch,
+            execution.transitionVerification,
+        )
+    }
+
+    @Test
+    fun capture_paused_target_never_advances() = runTest(mainDispatcherRule.dispatcher) {
+        val observationPort = FakeObservationPort()
+        val viewModel = TutorialDetailViewModel(
+            graphId = "wechat_open_family_chat",
+            repository = TutorialDetailRepository { testTutorialDetail() },
+            observationPort = observationPort,
+        )
+        advanceUntilIdle()
+        viewModel.startTutorial()
+        viewModel.confirmStepCompleted(requirePageVerification = true)
+        val targetRequest = observationPort.lastRequest!!
+
+        observationPort.pause(targetRequest)
+        advanceUntilIdle()
+
+        val execution = currentExecution(viewModel)
+        assertTrue(execution.stage is TutorialExecutionStage.Step)
+        assertEquals(
+            TransitionVerificationStatus.CapturePaused,
+            execution.transitionVerification,
+        )
+    }
 
     @Test
     fun retry_recovers_after_loading_failure() = runTest(mainDispatcherRule.dispatcher) {
@@ -145,6 +277,7 @@ class TutorialDetailViewModelTest {
         private val mutableState = MutableStateFlow<ObservationState>(ObservationState.Idle)
         override val state: StateFlow<ObservationState> = mutableState
         var lastRequest: ObservationRequest? = null
+        private var sequence = 0L
 
         override fun observe(request: ObservationRequest) {
             lastRequest = request
@@ -156,7 +289,49 @@ class TutorialDetailViewModelTest {
         }
 
         fun publish(observation: ScreenObservation) {
-            mutableState.value = ObservationState.Available(observation)
+            sequence += 1
+            mutableState.value = ObservationState.Available(sequence, observation)
         }
+
+        fun pause(request: ObservationRequest) {
+            mutableState.value = ObservationState.CapturePaused(request)
+        }
+    }
+
+    private class FakeOverlayPort : GuidanceOverlayPort {
+        private val mutableState = MutableStateFlow<GuidanceOverlayState>(
+            GuidanceOverlayState.Hidden,
+        )
+        override val state: StateFlow<GuidanceOverlayState> = mutableState
+        var lastCommand: GuidanceOverlayCommand? = null
+
+        override fun show(command: GuidanceOverlayCommand) {
+            lastCommand = command
+            mutableState.value = GuidanceOverlayState.Visible(1, command)
+        }
+
+        override fun hide() {
+            mutableState.value = GuidanceOverlayState.Hidden
+        }
+    }
+
+    private fun matchingObservation(
+        request: ObservationRequest,
+        bounds: NormalizedScreenBounds? = null,
+        confidence: Double = 1.0,
+        appPackage: String = "com.tencent.mm",
+    ) = ScreenObservation(
+        request = request,
+        app = ObservedApp(appPackage, "8.0.60", 2600),
+        anchorEvidence = listOf(
+            AnchorEvidence(request.anchors.single().anchorId, confidence, bounds),
+        ),
+        structureScore = if (confidence >= 0.80) 1.0 else 0.0,
+        sharingPolicy = ObservationSharingPolicy.LocalOnly,
+    )
+
+    private fun currentExecution(viewModel: TutorialDetailViewModel): TutorialDetailMode.Execution {
+        val content = viewModel.uiState.value as TutorialDetailUiState.Content
+        return content.mode as TutorialDetailMode.Execution
     }
 }

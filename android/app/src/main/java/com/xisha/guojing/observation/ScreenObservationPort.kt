@@ -15,6 +15,7 @@ interface ScreenObservationPort {
 
 object AccessibilityObservationCoordinator : ScreenObservationPort {
     private val mutableState = MutableStateFlow<ObservationState>(ObservationState.Idle)
+    private var observationSequence = 0L
     override val state: StateFlow<ObservationState> = mutableState.asStateFlow()
 
     override fun observe(request: ObservationRequest) {
@@ -26,6 +27,7 @@ object AccessibilityObservationCoordinator : ScreenObservationPort {
     }
 
     override fun stop() {
+        observationSequence = 0
         mutableState.value = ObservationState.Idle
     }
 
@@ -41,7 +43,11 @@ object AccessibilityObservationCoordinator : ScreenObservationPort {
         if (observation.request == activeRequest &&
             activeRequest.privacyMode != PrivacyMode.CapturePaused
         ) {
-            mutableState.value = ObservationState.Available(observation)
+            observationSequence += 1
+            mutableState.value = ObservationState.Available(
+                sequence = observationSequence,
+                observation = observation,
+            )
         }
     }
 }

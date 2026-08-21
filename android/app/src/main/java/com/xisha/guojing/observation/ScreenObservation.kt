@@ -20,6 +20,7 @@ data class ObservedApp(
 data class AnchorEvidence(
     val anchorId: String,
     val confidence: Double,
+    val normalizedBounds: NormalizedScreenBounds?,
 )
 
 data class ScreenObservation(
@@ -47,6 +48,7 @@ sealed interface ObservationState {
     ) : ObservationState
 
     data class Available(
+        val sequence: Long,
         val observation: ScreenObservation,
     ) : ObservationState
 }

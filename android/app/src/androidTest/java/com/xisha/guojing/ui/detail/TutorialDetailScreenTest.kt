@@ -87,7 +87,7 @@ class TutorialDetailScreenTest {
 
         composeRule.onNodeWithText("第 1 步").assertIsDisplayed()
         composeRule.onNodeWithText("点击“家人”聊天").assertIsDisplayed()
-        composeRule.onNodeWithText("我已完成这一步").assertIsDisplayed()
+        composeRule.onNodeWithText("我已完成这一步（手动）").assertIsDisplayed()
         composeRule.onNodeWithText("页面观察未开启").assertIsDisplayed()
     }
 
@@ -121,6 +121,38 @@ class TutorialDetailScreenTest {
         composeRule.onNodeWithText("当前页面匹配").assertIsDisplayed()
         composeRule.onNodeWithText("已找到教程需要的页面控件。证据只保留在本机。")
             .assertIsDisplayed()
+        composeRule.onNodeWithText("我已操作，切回目标 APP 确认").assertIsDisplayed()
+    }
+
+    @Test
+    fun target_verification_warns_user_not_to_repeat_the_action() {
+        val stage = TutorialExecutionEngine(androidTestDetail().graph).start()
+            as TutorialExecutionStage.Step
+        composeRule.setContent {
+            GuoJingTheme {
+                TutorialDetailScreen(
+                    uiState = TutorialDetailUiState.Content(
+                        tutorial = androidTestDetail(),
+                        mode = TutorialDetailMode.Execution(
+                            stage = stage,
+                            pageObservation = PageObservationStatus.Matched(1.0, true),
+                            transitionVerification =
+                                TransitionVerificationStatus.CheckingTarget(1, 2),
+                        ),
+                    ),
+                    onBack = {},
+                    onRetry = {},
+                    onStartTutorial = {},
+                    onConfirmStepCompleted = {},
+                    onExitExecution = {},
+                    pageObservationServiceEnabled = true,
+                )
+            }
+        }
+
+        composeRule.onNodeWithText("正在确认操作结果").assertIsDisplayed()
+        composeRule.onNodeWithText("已获得 1/2 次稳定页面证据。请不要重复操作。")
+            .assertIsDisplayed()
     }
 
     @Test
@@ -147,7 +179,7 @@ class TutorialDetailScreenTest {
 
         composeRule.onNodeWithText("这是高风险操作").assertIsDisplayed()
         assertTrue(
-            composeRule.onAllNodesWithText("我已完成这一步")
+            composeRule.onAllNodesWithText("我已完成这一步（手动）")
                 .fetchSemanticsNodes().isEmpty(),
         )
     }

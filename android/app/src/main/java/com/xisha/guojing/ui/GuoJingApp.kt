@@ -13,6 +13,8 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.xisha.guojing.data.TutorialCatalogRepository
 import com.xisha.guojing.data.TutorialDetailRepository
+import com.xisha.guojing.guidance.DisabledGuidanceOverlayPort
+import com.xisha.guojing.guidance.GuidanceOverlayPort
 import com.xisha.guojing.observation.DisabledScreenObservationPort
 import com.xisha.guojing.observation.ScreenObservationPort
 import com.xisha.guojing.ui.catalog.TutorialCatalogScreen
@@ -27,6 +29,7 @@ fun GuoJingApp(
     catalogRepository: TutorialCatalogRepository,
     detailRepository: TutorialDetailRepository,
     observationPort: ScreenObservationPort = DisabledScreenObservationPort,
+    overlayPort: GuidanceOverlayPort = DisabledGuidanceOverlayPort,
     pageObservationServiceEnabled: Boolean = false,
     onOpenAccessibilitySettings: () -> Unit = {},
 ) {
@@ -66,6 +69,7 @@ fun GuoJingApp(
                     graphId,
                     detailRepository,
                     observationPort,
+                    overlayPort,
                 ),
             )
             val uiState by detailViewModel.uiState.collectAsStateWithLifecycle()
@@ -87,7 +91,11 @@ fun GuoJingApp(
                 },
                 onRetry = detailViewModel::retry,
                 onStartTutorial = detailViewModel::startTutorial,
-                onConfirmStepCompleted = detailViewModel::confirmStepCompleted,
+                onConfirmStepCompleted = {
+                    detailViewModel.confirmStepCompleted(
+                        requirePageVerification = pageObservationServiceEnabled,
+                    )
+                },
                 onExitExecution = detailViewModel::exitExecution,
                 pageObservationServiceEnabled = pageObservationServiceEnabled,
                 onOpenAccessibilitySettings = onOpenAccessibilitySettings,

@@ -20,7 +20,24 @@ sealed interface TutorialDetailMode {
     data class Execution(
         val stage: TutorialExecutionStage,
         val pageObservation: PageObservationStatus = PageObservationStatus.NotStarted,
+        val transitionVerification: TransitionVerificationStatus =
+            TransitionVerificationStatus.Ready,
     ) : TutorialDetailMode
+}
+
+sealed interface TransitionVerificationStatus {
+    data object Ready : TransitionVerificationStatus
+
+    data class CheckingTarget(
+        val matchedObservations: Int,
+        val requiredObservations: Int,
+    ) : TransitionVerificationStatus
+
+    data object TargetUncertain : TransitionVerificationStatus
+
+    data object TargetMismatch : TransitionVerificationStatus
+
+    data object CapturePaused : TransitionVerificationStatus
 }
 
 sealed interface PageObservationStatus {

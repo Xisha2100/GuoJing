@@ -12,6 +12,7 @@ import com.xisha.guojing.data.DefaultTutorialCatalogRepository
 import com.xisha.guojing.data.DefaultTutorialDetailRepository
 import com.xisha.guojing.data.HttpTutorialCatalogDataSource
 import com.xisha.guojing.data.HttpTutorialDetailDataSource
+import com.xisha.guojing.guidance.AccessibilityGuidanceCoordinator
 import com.xisha.guojing.observation.AccessibilityObservationCoordinator
 import com.xisha.guojing.observation.isPageObservationServiceEnabled
 import com.xisha.guojing.ui.GuoJingApp
@@ -41,6 +42,7 @@ class MainActivity : ComponentActivity() {
                     catalogRepository = catalogRepository,
                     detailRepository = detailRepository,
                     observationPort = AccessibilityObservationCoordinator,
+                    overlayPort = AccessibilityGuidanceCoordinator,
                     pageObservationServiceEnabled = pageObservationServiceEnabled,
                     onOpenAccessibilitySettings = {
                         startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
