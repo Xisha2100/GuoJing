@@ -50,6 +50,7 @@ class SemanticObservationBuilder {
                 PrivacyMode.LocalOnly -> ObservationSharingPolicy.LocalOnly
                 PrivacyMode.CapturePaused -> error("capture-paused requests return before collection")
             },
+            evidenceSource = ObservationEvidenceSource.Accessibility,
         )
     }
 

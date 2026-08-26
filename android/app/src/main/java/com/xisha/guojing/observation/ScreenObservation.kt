@@ -29,11 +29,19 @@ data class ScreenObservation(
     val anchorEvidence: List<AnchorEvidence>,
     val structureScore: Double,
     val sharingPolicy: ObservationSharingPolicy,
+    val evidenceSource: ObservationEvidenceSource = ObservationEvidenceSource.Accessibility,
+    val ocrStrategy: OcrStrategy? = null,
+    val ocrInputKind: OcrInputKind? = null,
 )
 
 enum class ObservationSharingPolicy {
     SanitizedNetworkAllowed,
     LocalOnly,
+}
+
+enum class ObservationEvidenceSource {
+    Accessibility,
+    Ocr,
 }
 
 sealed interface ObservationState {
