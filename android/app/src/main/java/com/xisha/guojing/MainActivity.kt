@@ -15,6 +15,7 @@ import com.xisha.guojing.data.HttpTutorialDetailDataSource
 import com.xisha.guojing.guidance.AccessibilityGuidanceCoordinator
 import com.xisha.guojing.observation.AccessibilityObservationCoordinator
 import com.xisha.guojing.observation.isPageObservationServiceEnabled
+import com.xisha.guojing.privacy.AndroidScreenshotPrivacyProcessor
 import com.xisha.guojing.ui.GuoJingApp
 import com.xisha.guojing.ui.theme.GuoJingTheme
 
@@ -31,6 +32,9 @@ class MainActivity : ComponentActivity() {
             HttpTutorialDetailDataSource(BuildConfig.API_BASE_URL),
         )
     }
+    private val screenshotPrivacyProcessor by lazy {
+        AndroidScreenshotPrivacyProcessor(contentResolver)
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -43,6 +47,7 @@ class MainActivity : ComponentActivity() {
                     detailRepository = detailRepository,
                     observationPort = AccessibilityObservationCoordinator,
                     overlayPort = AccessibilityGuidanceCoordinator,
+                    screenshotPrivacyProcessor = screenshotPrivacyProcessor,
                     pageObservationServiceEnabled = pageObservationServiceEnabled,
                     onOpenAccessibilitySettings = {
                         startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))

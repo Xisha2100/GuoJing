@@ -40,6 +40,7 @@ fun TutorialCatalogScreen(
     uiState: TutorialCatalogUiState,
     onRetry: () -> Unit,
     onTutorialSelected: (String) -> Unit,
+    onScreenshotHelp: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     Surface(
@@ -51,7 +52,7 @@ fun TutorialCatalogScreen(
                 .fillMaxSize()
                 .windowInsetsPadding(WindowInsets.safeDrawing),
         ) {
-            CatalogHeader()
+            CatalogHeader(onScreenshotHelp)
             when (uiState) {
                 TutorialCatalogUiState.Loading -> LoadingContent()
                 TutorialCatalogUiState.Empty -> EmptyContent()
@@ -66,7 +67,7 @@ fun TutorialCatalogScreen(
 }
 
 @Composable
-private fun CatalogHeader() {
+private fun CatalogHeader(onScreenshotHelp: () -> Unit) {
     Column(
         modifier = Modifier.padding(horizontal = 24.dp, vertical = 24.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -96,6 +97,19 @@ private fun CatalogHeader() {
             text = "手机不会用？我们一步一步来。",
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             style = MaterialTheme.typography.bodyLarge,
+        )
+        Button(
+            onClick = onScreenshotHelp,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(56.dp),
+        ) {
+            Text("截图问一问")
+        }
+        Text(
+            text = "没有录制教程的 APP，也可以先用截图说明问题。",
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            style = MaterialTheme.typography.bodyMedium,
         )
     }
 }

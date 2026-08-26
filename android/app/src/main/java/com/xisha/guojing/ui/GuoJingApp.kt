@@ -2,6 +2,9 @@ package com.xisha.guojing.ui
 
 import android.net.Uri
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -17,12 +20,16 @@ import com.xisha.guojing.guidance.DisabledGuidanceOverlayPort
 import com.xisha.guojing.guidance.GuidanceOverlayPort
 import com.xisha.guojing.observation.DisabledScreenObservationPort
 import com.xisha.guojing.observation.ScreenObservationPort
+import com.xisha.guojing.privacy.DisabledScreenshotPrivacyProcessor
+import com.xisha.guojing.privacy.ScreenshotPrivacyProcessor
 import com.xisha.guojing.ui.catalog.TutorialCatalogScreen
 import com.xisha.guojing.ui.catalog.TutorialCatalogViewModel
 import com.xisha.guojing.ui.detail.TutorialDetailMode
 import com.xisha.guojing.ui.detail.TutorialDetailScreen
 import com.xisha.guojing.ui.detail.TutorialDetailUiState
 import com.xisha.guojing.ui.detail.TutorialDetailViewModel
+import com.xisha.guojing.ui.help.ScreenshotHelpScreen
+import com.xisha.guojing.ui.help.ScreenshotHelpViewModel
 
 @Composable
 fun GuoJingApp(
@@ -30,6 +37,8 @@ fun GuoJingApp(
     detailRepository: TutorialDetailRepository,
     observationPort: ScreenObservationPort = DisabledScreenObservationPort,
     overlayPort: GuidanceOverlayPort = DisabledGuidanceOverlayPort,
+    screenshotPrivacyProcessor: ScreenshotPrivacyProcessor =
+        DisabledScreenshotPrivacyProcessor,
     pageObservationServiceEnabled: Boolean = false,
     onOpenAccessibilitySettings: () -> Unit = {},
 ) {
@@ -49,6 +58,38 @@ fun GuoJingApp(
                 onTutorialSelected = { graphId ->
                     navController.navigate("tutorial/${Uri.encode(graphId)}")
                 },
+                onScreenshotHelp = {
+                    navController.navigate(SCREENSHOT_HELP_ROUTE)
+                },
+            )
+        }
+
+        composable(SCREENSHOT_HELP_ROUTE) {
+            val screenshotHelpViewModel: ScreenshotHelpViewModel = viewModel(
+                factory = ScreenshotHelpViewModel.factory(screenshotPrivacyProcessor),
+            )
+            val uiState by screenshotHelpViewModel.uiState.collectAsStateWithLifecycle()
+            val picker = rememberLauncherForActivityResult(PickVisualMedia()) { uri ->
+                uri?.let { screenshotHelpViewModel.importScreenshot(it.toString()) }
+            }
+            val leaveHelp = {
+                screenshotHelpViewModel.discard()
+                navController.popBackStack()
+                Unit
+            }
+            BackHandler(onBack = leaveHelp)
+            ScreenshotHelpScreen(
+                uiState = uiState,
+                onBack = leaveHelp,
+                onPickScreenshot = {
+                    picker.launch(PickVisualMediaRequest(PickVisualMedia.ImageOnly))
+                },
+                onQuestionChanged = screenshotHelpViewModel::updateQuestion,
+                onAddRedaction = screenshotHelpViewModel::addRedaction,
+                onUndoRedaction = screenshotHelpViewModel::undoLastRedaction,
+                onNoSensitiveContentChanged =
+                    screenshotHelpViewModel::setNoSensitiveContentConfirmed,
+                onSanitize = screenshotHelpViewModel::sanitize,
             )
         }
 
@@ -105,5 +146,6 @@ fun GuoJingApp(
 }
 
 private const val CATALOG_ROUTE = "catalog"
+private const val SCREENSHOT_HELP_ROUTE = "screenshot-help"
 private const val GRAPH_ID_ARGUMENT = "graphId"
 private const val DETAIL_ROUTE = "tutorial/{$GRAPH_ID_ARGUMENT}"

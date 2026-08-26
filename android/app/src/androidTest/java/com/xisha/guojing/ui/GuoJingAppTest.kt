@@ -46,4 +46,20 @@ class GuoJingAppTest {
         composeRule.onNodeWithText("我已完成这一步（手动）").performClick()
         composeRule.onNodeWithText("教程已完成").assertIsDisplayed()
     }
+
+    @Test
+    fun catalog_opens_screenshot_help_without_requiring_a_tutorial() {
+        composeRule.setContent {
+            GuoJingTheme {
+                GuoJingApp(
+                    catalogRepository = TutorialCatalogRepository { emptyList() },
+                    detailRepository = TutorialDetailRepository { androidTestDetail() },
+                )
+            }
+        }
+
+        composeRule.onNodeWithText("截图问一问").performClick()
+        composeRule.onNodeWithText("哪里不会，就截哪里").assertIsDisplayed()
+        composeRule.onNodeWithText("现在不会发送").assertIsDisplayed()
+    }
 }
