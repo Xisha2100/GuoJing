@@ -5,6 +5,10 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
+import com.xisha.guojing.data.DisabledHelpRequestSender
+import com.xisha.guojing.data.HelpRequestIntent
+import com.xisha.guojing.data.HelpRequestSender
+import com.xisha.guojing.data.HelpRequestSubmission
 import com.xisha.guojing.privacy.InMemoryScreenshot
 import com.xisha.guojing.privacy.NormalizedRedaction
 import com.xisha.guojing.privacy.ScreenshotPrivacyProcessor
@@ -19,6 +23,7 @@ import kotlinx.coroutines.launch
 
 class ScreenshotHelpViewModel(
     private val processor: ScreenshotPrivacyProcessor,
+    private val sender: HelpRequestSender = DisabledHelpRequestSender,
 ) : ViewModel() {
     private val mutableUiState = MutableStateFlow<ScreenshotHelpUiState>(
         ScreenshotHelpUiState.AwaitingSelection(),
@@ -122,6 +127,52 @@ class ScreenshotHelpViewModel(
         }
     }
 
+    fun selectIntent(intent: HelpRequestIntent) {
+        val ready = mutableUiState.value as? ScreenshotHelpUiState.Ready ?: return
+        mutableUiState.value = ready.copy(intent = intent, error = null)
+    }
+
+    fun setSendConsent(confirmed: Boolean) {
+        val ready = mutableUiState.value as? ScreenshotHelpUiState.Ready ?: return
+        mutableUiState.value = ready.copy(sendConsent = confirmed, error = null)
+    }
+
+    fun send() {
+        val ready = mutableUiState.value as? ScreenshotHelpUiState.Ready ?: return
+        if (!ready.canSend) return
+        processingJob?.cancel()
+        mutableUiState.value = ScreenshotHelpUiState.Sending(
+            screenshot = ready.screenshot,
+            question = ready.question,
+            receipt = ready.receipt,
+            intent = ready.intent,
+        )
+        processingJob = viewModelScope.launch {
+            try {
+                val serverReceipt = sender.send(
+                    HelpRequestSubmission(
+                        screenshot = ready.screenshot,
+                        question = ready.question,
+                        receipt = ready.receipt,
+                        intent = ready.intent,
+                    ),
+                )
+                ensureActive()
+                ready.screenshot.erase()
+                mutableUiState.value = ScreenshotHelpUiState.Submitted(
+                    question = ready.question,
+                    receipt = ready.receipt,
+                    intent = ready.intent,
+                    serverReceipt = serverReceipt,
+                )
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Exception) {
+                mutableUiState.value = ready.copy(error = ScreenshotHelpError.SendFailed)
+            }
+        }
+    }
+
     fun discard() {
         processingJob?.cancel()
         processingJob = null
@@ -134,8 +185,10 @@ class ScreenshotHelpViewModel(
             is ScreenshotHelpUiState.Editing -> current.screenshot.erase()
             is ScreenshotHelpUiState.Sanitizing -> current.screenshot.erase()
             is ScreenshotHelpUiState.Ready -> current.screenshot.erase()
+            is ScreenshotHelpUiState.Sending -> current.screenshot.erase()
             is ScreenshotHelpUiState.AwaitingSelection,
             ScreenshotHelpUiState.Importing,
+            is ScreenshotHelpUiState.Submitted,
             -> Unit
         }
     }
@@ -147,10 +200,13 @@ class ScreenshotHelpViewModel(
     }
 
     companion object {
-        fun factory(processor: ScreenshotPrivacyProcessor): ViewModelProvider.Factory =
+        fun factory(
+            processor: ScreenshotPrivacyProcessor,
+            sender: HelpRequestSender = DisabledHelpRequestSender,
+        ): ViewModelProvider.Factory =
             viewModelFactory {
                 initializer {
-                    ScreenshotHelpViewModel(processor)
+                    ScreenshotHelpViewModel(processor, sender)
                 }
             }
 

@@ -2,10 +2,14 @@ package com.xisha.guojing.ui.help
 
 import android.graphics.Bitmap
 import android.graphics.Color
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
@@ -49,8 +53,8 @@ class ScreenshotHelpScreenTest {
 
     @Test
     fun editing_requires_question_and_privacy_confirmation() {
-        var question = ""
-        var confirmed = false
+        var question by mutableStateOf("")
+        var confirmed by mutableStateOf(false)
         var sanitized = false
         val screenshot = testScreenshot()
         composeRule.setContent {
@@ -79,9 +83,10 @@ class ScreenshotHelpScreenTest {
         composeRule.onNodeWithText("生成脱敏副本")
             .performScrollTo()
             .assertIsNotEnabled()
-        composeRule.onNodeWithText("例如：下一步应该点哪里？")
+        composeRule.onNodeWithTag("screenshot_question_input")
             .performTextInput("下一步怎么做？")
         composeRule.onNodeWithText("我已检查，截图中没有隐私内容")
+            .performScrollTo()
             .performClick()
 
         assertEquals("下一步怎么做？", question)
@@ -118,6 +123,43 @@ class ScreenshotHelpScreenTest {
         composeRule.onNodeWithText("尚未发送给 AI").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithText("已经永久遮挡 2 处；脱敏副本校验码 cccccccccccc。")
             .assertIsDisplayed()
+    }
+
+    @Test
+    fun ready_screen_requires_explicit_send_consent() {
+        composeRule.setContent {
+            GuoJingTheme {
+                ScreenshotHelpScreen(
+                    uiState = ScreenshotHelpUiState.Ready(
+                        screenshot = testScreenshot(),
+                        question = "这里应该点哪里？",
+                        receipt = ScreenshotSanitizationReceipt(
+                            redactionCount = 1,
+                            noSensitiveContentConfirmed = false,
+                            sanitizedSha256 = "d".repeat(64),
+                        ),
+                    ),
+                    onBack = {},
+                    onPickScreenshot = {},
+                    onQuestionChanged = {},
+                    onAddRedaction = {},
+                    onUndoRedaction = {},
+                    onNoSensitiveContentChanged = {},
+                    onSanitize = {},
+                )
+            }
+        }
+
+        composeRule.onNodeWithText("第三步：选择帮助方式").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("查找已录制教程")
+            .performScrollTo()
+            .assertIsDisplayed()
+        composeRule.onNodeWithText("我确认只发送这份已经脱敏的截图和问题")
+            .performScrollTo()
+            .assertIsDisplayed()
+        composeRule.onNodeWithText("发送脱敏副本")
+            .performScrollTo()
+            .assertIsNotEnabled()
     }
 
     private fun testScreenshot(): InMemoryScreenshot {

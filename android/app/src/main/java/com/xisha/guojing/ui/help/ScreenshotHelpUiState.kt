@@ -1,5 +1,7 @@
 package com.xisha.guojing.ui.help
 
+import com.xisha.guojing.data.HelpRequestIntent
+import com.xisha.guojing.data.HelpRequestReceipt
 import com.xisha.guojing.privacy.InMemoryScreenshot
 import com.xisha.guojing.privacy.NormalizedRedaction
 import com.xisha.guojing.privacy.ScreenshotSanitizationReceipt
@@ -34,10 +36,31 @@ sealed interface ScreenshotHelpUiState {
         val screenshot: InMemoryScreenshot,
         val question: String,
         val receipt: ScreenshotSanitizationReceipt,
+        val intent: HelpRequestIntent = HelpRequestIntent.GENERAL_GUIDANCE,
+        val sendConsent: Boolean = false,
+        val error: ScreenshotHelpError? = null,
+    ) : ScreenshotHelpUiState {
+        val canSend: Boolean
+            get() = sendConsent && question.isNotBlank()
+    }
+
+    data class Sending(
+        val screenshot: InMemoryScreenshot,
+        val question: String,
+        val receipt: ScreenshotSanitizationReceipt,
+        val intent: HelpRequestIntent,
+    ) : ScreenshotHelpUiState
+
+    data class Submitted(
+        val question: String,
+        val receipt: ScreenshotSanitizationReceipt,
+        val intent: HelpRequestIntent,
+        val serverReceipt: HelpRequestReceipt,
     ) : ScreenshotHelpUiState
 }
 
 enum class ScreenshotHelpError {
     ImportFailed,
     SanitizationFailed,
+    SendFailed,
 }

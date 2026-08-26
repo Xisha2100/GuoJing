@@ -10,6 +10,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import com.xisha.guojing.data.DefaultTutorialCatalogRepository
 import com.xisha.guojing.data.DefaultTutorialDetailRepository
+import com.xisha.guojing.data.HttpHelpRequestSender
 import com.xisha.guojing.data.HttpTutorialCatalogDataSource
 import com.xisha.guojing.data.HttpTutorialDetailDataSource
 import com.xisha.guojing.guidance.AccessibilityGuidanceCoordinator
@@ -35,6 +36,9 @@ class MainActivity : ComponentActivity() {
     private val screenshotPrivacyProcessor by lazy {
         AndroidScreenshotPrivacyProcessor(contentResolver)
     }
+    private val helpRequestSender by lazy {
+        HttpHelpRequestSender(BuildConfig.API_BASE_URL)
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -48,6 +52,7 @@ class MainActivity : ComponentActivity() {
                     observationPort = AccessibilityObservationCoordinator,
                     overlayPort = AccessibilityGuidanceCoordinator,
                     screenshotPrivacyProcessor = screenshotPrivacyProcessor,
+                    helpRequestSender = helpRequestSender,
                     pageObservationServiceEnabled = pageObservationServiceEnabled,
                     onOpenAccessibilitySettings = {
                         startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))

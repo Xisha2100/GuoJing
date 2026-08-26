@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.toggleable
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
@@ -31,6 +32,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -50,8 +52,10 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.xisha.guojing.data.HelpRequestIntent
 import com.xisha.guojing.privacy.InMemoryScreenshot
 import com.xisha.guojing.privacy.NormalizedRedaction
 
@@ -65,6 +69,9 @@ fun ScreenshotHelpScreen(
     onUndoRedaction: () -> Unit,
     onNoSensitiveContentChanged: (Boolean) -> Unit,
     onSanitize: () -> Unit,
+    onIntentSelected: (HelpRequestIntent) -> Unit = {},
+    onSendConsentChanged: (Boolean) -> Unit = {},
+    onSend: () -> Unit = {},
 ) {
     Surface(
         modifier = Modifier.fillMaxSize(),
@@ -107,6 +114,14 @@ fun ScreenshotHelpScreen(
                         BusyContent("正在本机生成脱敏副本……")
                     }
                     is ScreenshotHelpUiState.Ready -> ReadyContent(
+                        state = uiState,
+                        onPickScreenshot = onPickScreenshot,
+                        onIntentSelected = onIntentSelected,
+                        onSendConsentChanged = onSendConsentChanged,
+                        onSend = onSend,
+                    )
+                    is ScreenshotHelpUiState.Sending -> BusyContent("正在发送脱敏副本……")
+                    is ScreenshotHelpUiState.Submitted -> SubmittedContent(
                         state = uiState,
                         onPickScreenshot = onPickScreenshot,
                     )
@@ -261,7 +276,9 @@ private fun EditingContent(
     OutlinedTextField(
         value = state.question,
         onValueChange = onQuestionChanged,
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag(QUESTION_INPUT_TEST_TAG),
         minLines = 3,
         maxLines = 5,
         label = { Text("例如：下一步应该点哪里？") },
@@ -289,10 +306,15 @@ private fun EditingContent(
     }
 }
 
+private const val QUESTION_INPUT_TEST_TAG = "screenshot_question_input"
+
 @Composable
 private fun ReadyContent(
     state: ScreenshotHelpUiState.Ready,
     onPickScreenshot: () -> Unit,
+    onIntentSelected: (HelpRequestIntent) -> Unit,
+    onSendConsentChanged: (Boolean) -> Unit,
+    onSend: () -> Unit,
 ) {
     Text(
         text = "脱敏副本已准备好",
@@ -317,6 +339,55 @@ private fun ReadyContent(
         title = "尚未发送给 AI",
         body = "当前只完成了本地脱敏。OCR、视觉模型和基础指引 Agent 将在后续模块接入。",
     )
+    Text(
+        text = "第三步：选择帮助方式",
+        modifier = Modifier.semantics { heading() },
+        style = MaterialTheme.typography.headlineSmall,
+    )
+    IntentChoice(
+        selected = state.intent == HelpRequestIntent.RECORDED_TUTORIAL,
+        title = "查找已录制教程",
+        body = "如果老牌子已有这个 APP 的教程，优先尝试匹配。",
+        onClick = { onIntentSelected(HelpRequestIntent.RECORDED_TUTORIAL) },
+    )
+    IntentChoice(
+        selected = state.intent == HelpRequestIntent.GENERAL_GUIDANCE,
+        title = "没有教程，先看基础指引",
+        body = "适用于尚未录制的 APP，后续只生成解释，不自动替你操作。",
+        onClick = { onIntentSelected(HelpRequestIntent.GENERAL_GUIDANCE) },
+    )
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .toggleable(
+                value = state.sendConsent,
+                role = Role.Checkbox,
+                onValueChange = onSendConsentChanged,
+            )
+            .semantics(mergeDescendants = true) {},
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Checkbox(
+            checked = state.sendConsent,
+            onCheckedChange = null,
+        )
+        Text(
+            text = "我确认只发送这份已经脱敏的截图和问题",
+            style = MaterialTheme.typography.bodyLarge,
+        )
+    }
+    if (state.error == ScreenshotHelpError.SendFailed) {
+        ErrorCard("发送失败，脱敏副本仍只在本次内存会话中，可以重试。")
+    }
+    Button(
+        onClick = onSend,
+        enabled = state.canSend,
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(60.dp),
+    ) {
+        Text("发送脱敏副本")
+    }
     Button(
         onClick = onPickScreenshot,
         modifier = Modifier
@@ -324,6 +395,78 @@ private fun ReadyContent(
             .height(60.dp),
     ) {
         Text("重新选择截图")
+    }
+}
+
+@Composable
+private fun IntentChoice(
+    selected: Boolean,
+    title: String,
+    body: String,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .selectable(
+                selected = selected,
+                role = Role.RadioButton,
+                onClick = onClick,
+            )
+            .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.Top,
+    ) {
+        RadioButton(
+            selected = selected,
+            onClick = null,
+        )
+        Column(
+            modifier = Modifier.padding(start = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Text(title, style = MaterialTheme.typography.titleMedium)
+            Text(
+                body,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodyMedium,
+            )
+        }
+    }
+}
+
+@Composable
+private fun SubmittedContent(
+    state: ScreenshotHelpUiState.Submitted,
+    onPickScreenshot: () -> Unit,
+) {
+    Text(
+        text = "求助已送达",
+        modifier = Modifier.semantics { heading() },
+        color = MaterialTheme.colorScheme.primary,
+        style = MaterialTheme.typography.headlineMedium,
+    )
+    InfoCard(
+        title = "服务端处理记录",
+        body = "服务端已校验脱敏副本并立即丢弃图片。当前还没有连接 OCR、视觉模型或 Agent，因此暂时不会返回自动答案。",
+    )
+    InfoCard(
+        title = "处理分支",
+        body = when (state.intent) {
+            HelpRequestIntent.RECORDED_TUTORIAL -> "将尝试匹配已录制教程。"
+            HelpRequestIntent.GENERAL_GUIDANCE -> "将准备无录制教程时的基础指引。"
+        },
+    )
+    InfoCard(
+        title = "请求编号",
+        body = state.serverReceipt.requestId,
+    )
+    Button(
+        onClick = onPickScreenshot,
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(60.dp),
+    ) {
+        Text("再问一个问题")
     }
 }
 

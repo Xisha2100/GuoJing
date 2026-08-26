@@ -8,6 +8,7 @@ from fastapi import FastAPI
 
 from guojing.api.router import api_router
 from guojing.application.auth.service import AdminAuthService
+from guojing.application.help_requests.service import HelpRequestService
 from guojing.application.tutorial_drafts.service import TutorialDraftService
 from guojing.application.tutorials.service import TutorialService
 from guojing.core.config import Settings
@@ -29,6 +30,7 @@ def create_app(
     tutorial_service: TutorialService | None = None,
     tutorial_draft_service: TutorialDraftService | None = None,
     admin_auth_service: AdminAuthService | None = None,
+    help_request_service: HelpRequestService | None = None,
 ) -> FastAPI:
     """Build an isolated application instance for production or tests."""
     app_settings = settings or Settings()
@@ -50,6 +52,7 @@ def create_app(
             login_window=timedelta(minutes=app_settings.admin_login_window_minutes),
             maximum_failures=app_settings.admin_maximum_login_failures,
         )
+    help_request_service = help_request_service or HelpRequestService()
 
     @asynccontextmanager
     async def lifespan(_application: FastAPI) -> AsyncIterator[None]:
@@ -66,6 +69,7 @@ def create_app(
     application.state.tutorial_service = tutorial_service
     application.state.tutorial_draft_service = tutorial_draft_service
     application.state.admin_auth_service = admin_auth_service
+    application.state.help_request_service = help_request_service
     application.include_router(api_router)
     return application
 

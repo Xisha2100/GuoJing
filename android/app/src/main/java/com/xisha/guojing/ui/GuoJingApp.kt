@@ -16,6 +16,8 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.xisha.guojing.data.TutorialCatalogRepository
 import com.xisha.guojing.data.TutorialDetailRepository
+import com.xisha.guojing.data.DisabledHelpRequestSender
+import com.xisha.guojing.data.HelpRequestSender
 import com.xisha.guojing.guidance.DisabledGuidanceOverlayPort
 import com.xisha.guojing.guidance.GuidanceOverlayPort
 import com.xisha.guojing.observation.DisabledScreenObservationPort
@@ -39,6 +41,7 @@ fun GuoJingApp(
     overlayPort: GuidanceOverlayPort = DisabledGuidanceOverlayPort,
     screenshotPrivacyProcessor: ScreenshotPrivacyProcessor =
         DisabledScreenshotPrivacyProcessor,
+    helpRequestSender: HelpRequestSender = DisabledHelpRequestSender,
     pageObservationServiceEnabled: Boolean = false,
     onOpenAccessibilitySettings: () -> Unit = {},
 ) {
@@ -66,7 +69,10 @@ fun GuoJingApp(
 
         composable(SCREENSHOT_HELP_ROUTE) {
             val screenshotHelpViewModel: ScreenshotHelpViewModel = viewModel(
-                factory = ScreenshotHelpViewModel.factory(screenshotPrivacyProcessor),
+                factory = ScreenshotHelpViewModel.factory(
+                    screenshotPrivacyProcessor,
+                    helpRequestSender,
+                ),
             )
             val uiState by screenshotHelpViewModel.uiState.collectAsStateWithLifecycle()
             val picker = rememberLauncherForActivityResult(PickVisualMedia()) { uri ->
@@ -90,6 +96,9 @@ fun GuoJingApp(
                 onNoSensitiveContentChanged =
                     screenshotHelpViewModel::setNoSensitiveContentConfirmed,
                 onSanitize = screenshotHelpViewModel::sanitize,
+                onIntentSelected = screenshotHelpViewModel::selectIntent,
+                onSendConsentChanged = screenshotHelpViewModel::setSendConsent,
+                onSend = screenshotHelpViewModel::send,
             )
         }
 
