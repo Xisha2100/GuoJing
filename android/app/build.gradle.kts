@@ -66,6 +66,8 @@ dependencies {
     implementation(libs.androidx.compose.material3)
 
     implementation(libs.kotlinx.serialization.json)
+    implementation(libs.mlkit.text.recognition)
+    implementation(libs.mlkit.text.recognition.chinese)
 
     testImplementation(libs.junit4)
     testImplementation(libs.kotlinx.coroutines.test)
