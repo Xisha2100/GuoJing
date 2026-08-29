@@ -1,11 +1,14 @@
 """Shared test fixtures."""
 
 from collections.abc import Iterator
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
 from guojing.core.config import AppEnvironment, Settings
+from guojing.infrastructure.persistence.database import Database
+from guojing.infrastructure.persistence.models import Base
 from guojing.main import create_app
 
 
@@ -20,7 +23,15 @@ def test_settings() -> Settings:
 
 
 @pytest.fixture
-def client(test_settings: Settings) -> Iterator[TestClient]:
+def client(test_settings: Settings, tmp_path: Path) -> Iterator[TestClient]:
     """Exercise the API through the same ASGI boundary used in production."""
-    with TestClient(create_app(test_settings)) as test_client:
-        yield test_client
+    settings = test_settings.model_copy(
+        update={"database_url": f"sqlite:///{tmp_path / 'api.db'}"},
+    )
+    schema_database = Database(settings.database_url)
+    Base.metadata.create_all(schema_database.engine)
+    try:
+        with TestClient(create_app(settings)) as test_client:
+            yield test_client
+    finally:
+        schema_database.dispose()

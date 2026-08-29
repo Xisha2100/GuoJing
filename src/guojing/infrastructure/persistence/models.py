@@ -147,3 +147,29 @@ class AdminAuditEventRecord(Base):
     resource_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     details_json: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class HelpRequestResultRecord(Base):
+    """Persist lifecycle metadata without retaining the submitted screenshot."""
+
+    __tablename__ = "help_request_results"
+    __table_args__ = (
+        Index(
+            "ix_help_request_result_status_updated",
+            "processing_status",
+            "updated_at",
+        ),
+        Index("ix_help_request_result_expires_at", "expires_at"),
+    )
+
+    request_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    client_request_id: Mapped[str] = mapped_column(String(36), unique=True, nullable=False)
+    request_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    intent: Mapped[str] = mapped_column(String(40), nullable=False)
+    processing_route: Mapped[str] = mapped_column(String(40), nullable=False)
+    processing_status: Mapped[str] = mapped_column(String(40), nullable=False)
+    received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    guidance_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    human_review_reason: Mapped[str | None] = mapped_column(Text, nullable=True)

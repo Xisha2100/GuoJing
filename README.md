@@ -373,6 +373,15 @@ cd android
 
 学习文档：[docs/learning/20-end-to-end-hardening.md](docs/learning/20-end-to-end-hardening.md)
 
+### 21：求助结果持久化与 TTL
+
+- 用 `HelpRequestRepository` 端口隔离状态机和数据库实现，单元测试仍可注入内存替身。
+- 默认 FastAPI 应用使用 SQLite 保存请求元数据、处理状态和已审核指引，不保存截图或 Base64。
+- `client_request_id`、请求指纹和数据库唯一约束共同保证跨进程幂等；不同内容复用同一 ID 会被拒绝。
+- 结果带 TTL 和容量上限，读取、列表和创建时都会清理过期记录，避免无限保留家属/复核信息。
+
+学习文档：[docs/learning/21-help-request-persistence.md](docs/learning/21-help-request-persistence.md)
+
 ## 教程 API
 
 管理端先登录；成功响应会设置会话 Cookie 和 CSRF Cookie：
@@ -439,7 +448,7 @@ GET /api/v1/tutorials/{graph_id}
 
 ## 下一步
 
-模块 20 完成后，下一阶段才适合评估真实 OCR 证据上传、教程检索和 DeepAgent 编排。任何新处理器仍必须通过同一状态机、人工复核和金融/不可逆动作拦截。
+下一模块将定义受控证据 Envelope，让本地 OCR 摘要和用户再次确认的脱敏证据能够进入处理器，同时继续禁止原图和 raw OCR 越过隐私边界。任何新处理器仍必须通过同一状态机、人工复核和金融/不可逆动作拦截。
 
 ## License
 

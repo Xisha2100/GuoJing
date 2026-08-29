@@ -9,6 +9,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from guojing.application.auth.service import AdminAuthService
+from guojing.application.help_requests.service import HelpRequestService
 from guojing.application.tutorial_drafts.service import TutorialDraftService
 from guojing.application.tutorials.service import TutorialService
 from guojing.core.config import AppEnvironment, Settings
@@ -17,6 +18,9 @@ from guojing.infrastructure.persistence.admin_auth_repository import (
     SqlAlchemyAdminAuthRepository,
 )
 from guojing.infrastructure.persistence.database import Database
+from guojing.infrastructure.persistence.help_request_repository import (
+    SqlAlchemyHelpRequestRepository,
+)
 from guojing.infrastructure.persistence.models import Base
 from guojing.infrastructure.persistence.tutorial_draft_repository import (
     SqlAlchemyTutorialDraftRepository,
@@ -89,6 +93,9 @@ def admin_api_client(
         tutorial_service=TutorialService(SqlAlchemyTutorialRepository(database)),
         tutorial_draft_service=TutorialDraftService(SqlAlchemyTutorialDraftRepository(database)),
         admin_auth_service=auth_service,
+        help_request_service=HelpRequestService(
+            repository=SqlAlchemyHelpRequestRepository(database),
+        ),
     )
     with TestClient(app) as client:
         yield client, database, auth_service

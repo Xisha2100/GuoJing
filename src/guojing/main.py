@@ -16,6 +16,9 @@ from guojing.infrastructure.persistence.admin_auth_repository import (
     SqlAlchemyAdminAuthRepository,
 )
 from guojing.infrastructure.persistence.database import Database
+from guojing.infrastructure.persistence.help_request_repository import (
+    SqlAlchemyHelpRequestRepository,
+)
 from guojing.infrastructure.persistence.tutorial_draft_repository import (
     SqlAlchemyTutorialDraftRepository,
 )
@@ -35,7 +38,12 @@ def create_app(
     """Build an isolated application instance for production or tests."""
     app_settings = settings or Settings()
     database: Database | None = None
-    if tutorial_service is None or tutorial_draft_service is None or admin_auth_service is None:
+    if (
+        tutorial_service is None
+        or tutorial_draft_service is None
+        or admin_auth_service is None
+        or help_request_service is None
+    ):
         database = Database(app_settings.database_url)
     if tutorial_service is None:
         assert database is not None
@@ -52,7 +60,11 @@ def create_app(
             login_window=timedelta(minutes=app_settings.admin_login_window_minutes),
             maximum_failures=app_settings.admin_maximum_login_failures,
         )
-    help_request_service = help_request_service or HelpRequestService()
+    if help_request_service is None:
+        assert database is not None
+        help_request_service = HelpRequestService(
+            repository=SqlAlchemyHelpRequestRepository(database),
+        )
 
     @asynccontextmanager
     async def lifespan(_application: FastAPI) -> AsyncIterator[None]:

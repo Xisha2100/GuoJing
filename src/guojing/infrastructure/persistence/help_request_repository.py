@@ -1,0 +1,216 @@
+"""SQLAlchemy Repository for TTL-bound help-request result metadata."""
+
+import json
+from datetime import datetime
+from uuid import UUID
+
+from sqlalchemy import delete, func, select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
+
+from guojing.application.help_requests.ports import ClientRequestConflictError
+from guojing.domain.help_requests import (
+    HelpRequestGuidance,
+    HelpRequestGuidanceStep,
+    HelpRequestIntent,
+    HelpRequestProcessingRoute,
+    HelpRequestProcessingStatus,
+    HelpRequestResult,
+)
+from guojing.infrastructure.persistence.database import Database
+from guojing.infrastructure.persistence.models import HelpRequestResultRecord
+from guojing.infrastructure.persistence.tutorial_storage import as_utc
+
+
+class SqlAlchemyHelpRequestRepository:
+    """Persist only the status projection and bounded review content."""
+
+    def __init__(self, database: Database, *, max_results: int = 1_000) -> None:
+        if max_results < 1:
+            raise ValueError("max_results must be positive")
+        self._database = database
+        self._max_results = max_results
+
+    def create_or_get(
+        self,
+        result: HelpRequestResult,
+        fingerprint: str,
+        expires_at: datetime,
+        now: datetime,
+    ) -> HelpRequestResult:
+        try:
+            with self._database.new_session() as session, session.begin():
+                _purge_expired(session, now)
+                existing = session.scalar(
+                    select(HelpRequestResultRecord).where(
+                        HelpRequestResultRecord.client_request_id == str(result.client_request_id),
+                    )
+                )
+                if existing is not None:
+                    return _existing_or_conflict(existing, fingerprint)
+                session.add(_to_record(result, fingerprint, expires_at))
+                session.flush()
+                _evict_if_full(session, self._max_results)
+        except IntegrityError as error:
+            existing_after_race = self._get_by_client_request_id(
+                result.client_request_id,
+                now,
+            )
+            if existing_after_race is not None:
+                return _existing_or_conflict(existing_after_race[0], fingerprint)
+            raise error
+        return result
+
+    def get(self, request_id: UUID, now: datetime) -> HelpRequestResult | None:
+        with self._database.new_session() as session, session.begin():
+            _purge_expired(session, now)
+            record = session.get(HelpRequestResultRecord, str(request_id))
+            return _from_record(record) if record is not None else None
+
+    def list(
+        self,
+        status: HelpRequestProcessingStatus | None,
+        now: datetime,
+    ) -> tuple[HelpRequestResult, ...]:
+        with self._database.new_session() as session, session.begin():
+            _purge_expired(session, now)
+            statement = select(HelpRequestResultRecord).order_by(
+                HelpRequestResultRecord.updated_at.desc(),
+            )
+            if status is not None:
+                statement = statement.where(
+                    HelpRequestResultRecord.processing_status == status.value,
+                )
+            records = session.scalars(statement).all()
+            return tuple(_from_record(record) for record in records)
+
+    def save(self, result: HelpRequestResult, now: datetime) -> None:
+        with self._database.new_session() as session, session.begin():
+            _purge_expired(session, now)
+            record = session.get(HelpRequestResultRecord, str(result.request_id))
+            if record is None:
+                return
+            record.processing_status = result.processing_status.value
+            record.updated_at = result.updated_at
+            record.guidance_json = _serialize_guidance(result.guidance)
+            record.human_review_reason = result.human_review_reason
+
+    def _get_by_client_request_id(
+        self,
+        client_request_id: UUID,
+        now: datetime,
+    ) -> tuple[HelpRequestResultRecord, str] | None:
+        with self._database.new_session() as session, session.begin():
+            _purge_expired(session, now)
+            record = session.scalar(
+                select(HelpRequestResultRecord).where(
+                    HelpRequestResultRecord.client_request_id == str(client_request_id),
+                )
+            )
+            return (record, record.request_fingerprint) if record is not None else None
+
+
+def _to_record(
+    result: HelpRequestResult,
+    fingerprint: str,
+    expires_at: datetime,
+) -> HelpRequestResultRecord:
+    return HelpRequestResultRecord(
+        request_id=str(result.request_id),
+        client_request_id=str(result.client_request_id),
+        request_fingerprint=fingerprint,
+        intent=result.intent.value,
+        processing_route=result.processing_route.value,
+        processing_status=result.processing_status.value,
+        received_at=result.received_at,
+        updated_at=result.updated_at,
+        expires_at=expires_at,
+        guidance_json=_serialize_guidance(result.guidance),
+        human_review_reason=result.human_review_reason,
+    )
+
+
+def _from_record(record: HelpRequestResultRecord) -> HelpRequestResult:
+    guidance = _deserialize_guidance(record.guidance_json)
+    return HelpRequestResult(
+        request_id=UUID(record.request_id),
+        client_request_id=UUID(record.client_request_id),
+        intent=HelpRequestIntent(record.intent),
+        processing_route=HelpRequestProcessingRoute(record.processing_route),
+        processing_status=HelpRequestProcessingStatus(record.processing_status),
+        received_at=as_utc(record.received_at),
+        updated_at=as_utc(record.updated_at),
+        guidance=guidance,
+        human_review_reason=record.human_review_reason,
+    )
+
+
+def _serialize_guidance(guidance: HelpRequestGuidance | None) -> str | None:
+    if guidance is None:
+        return None
+    return json.dumps(
+        {
+            "title": guidance.title,
+            "steps": [
+                {
+                    "step_id": step.step_id,
+                    "title": step.title,
+                    "instruction": step.instruction,
+                    "requires_manual_action": step.requires_manual_action,
+                }
+                for step in guidance.steps
+            ],
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+
+
+def _deserialize_guidance(payload: str | None) -> HelpRequestGuidance | None:
+    if payload is None:
+        return None
+    decoded = json.loads(payload)
+    steps = tuple(
+        HelpRequestGuidanceStep(
+            step_id=step["step_id"],
+            title=step["title"],
+            instruction=step["instruction"],
+            requires_manual_action=step["requires_manual_action"],
+        )
+        for step in decoded["steps"]
+    )
+    return HelpRequestGuidance(title=decoded["title"], steps=steps)
+
+
+def _existing_or_conflict(
+    record: HelpRequestResultRecord,
+    fingerprint: str,
+) -> HelpRequestResult:
+    if record.request_fingerprint != fingerprint:
+        raise ClientRequestConflictError(
+            "client_request_id cannot be reused for different request data",
+        )
+    return _from_record(record)
+
+
+def _purge_expired(session: Session, now: datetime) -> None:
+    session.execute(
+        delete(HelpRequestResultRecord).where(
+            HelpRequestResultRecord.expires_at <= now,
+        )
+    )
+
+
+def _evict_if_full(session: Session, max_results: int) -> None:
+    count = session.scalar(select(func.count(HelpRequestResultRecord.request_id))) or 0
+    if count <= max_results:
+        return
+    excess = count - max_results
+    oldest = session.scalars(
+        select(HelpRequestResultRecord)
+        .order_by(HelpRequestResultRecord.updated_at.asc())
+        .limit(excess)
+    ).all()
+    for record in oldest:
+        session.delete(record)

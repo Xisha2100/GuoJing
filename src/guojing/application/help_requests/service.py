@@ -3,13 +3,19 @@
 import base64
 import binascii
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
-from threading import Lock
 from uuid import UUID, uuid4
 
 from guojing.application.help_requests.dto import HelpRequestRequest
+from guojing.application.help_requests.in_memory_repository import (
+    InMemoryHelpRequestRepository,
+)
 from guojing.application.help_requests.models import HelpRequestReceipt
+from guojing.application.help_requests.ports import (
+    ClientRequestConflictError,
+    HelpRequestRepository,
+)
 from guojing.application.help_requests.processor import HelpRequestProcessor
 from guojing.domain.help_requests import (
     HelpRequestGuidance,
@@ -36,16 +42,15 @@ class HelpRequestService:
         self,
         clock: Callable[[], datetime] | None = None,
         *,
+        repository: HelpRequestRepository | None = None,
+        result_ttl: timedelta = timedelta(hours=24),
         max_results: int = 1_000,
     ) -> None:
-        if max_results < 1:
-            raise ValueError("max_results must be positive")
+        if result_ttl <= timedelta(0):
+            raise ValueError("result_ttl must be positive")
         self._clock = clock or (lambda: datetime.now(UTC))
-        self._max_results = max_results
-        self._results: dict[UUID, HelpRequestResult] = {}
-        self._request_ids_by_client_id: dict[UUID, UUID] = {}
-        self._fingerprints_by_client_id: dict[UUID, tuple[object, ...]] = {}
-        self._results_lock = Lock()
+        self._result_ttl = result_ttl
+        self._repository = repository or InMemoryHelpRequestRepository(max_results=max_results)
 
     def accept(self, request: HelpRequestRequest) -> HelpRequestReceipt:
         """Validate the image transiently and return a non-AI processing receipt."""
@@ -67,62 +72,45 @@ class HelpRequestService:
                 if command.intent is HelpRequestIntent.RECORDED_TUTORIAL
                 else HelpRequestProcessingRoute.GENERAL_GUIDANCE
             )
-            fingerprint = (
-                command.intent,
-                sha256(command.question.encode("utf-8")).hexdigest(),
-                command.image_width,
-                command.image_height,
-                command.redaction_count,
-                command.no_sensitive_content_confirmed,
-                command.sanitized_sha256,
-            )
-            request_id = uuid4()
-            received_at = self._clock()
+            fingerprint = sha256(
+                "|".join(
+                    (
+                        command.intent.value,
+                        sha256(command.question.encode("utf-8")).hexdigest(),
+                        str(command.image_width),
+                        str(command.image_height),
+                        str(command.redaction_count),
+                        str(command.no_sensitive_content_confirmed),
+                        command.sanitized_sha256,
+                    )
+                ).encode("utf-8")
+            ).hexdigest()
+            now = self._clock()
             result = HelpRequestResult(
-                request_id=request_id,
+                request_id=uuid4(),
                 client_request_id=command.client_request_id,
                 intent=command.intent,
                 processing_route=route,
                 processing_status=HelpRequestProcessingStatus.RECEIVED,
-                received_at=received_at,
-                updated_at=received_at,
+                received_at=now,
+                updated_at=now,
             )
-            with self._results_lock:
-                previous_request_id = self._request_ids_by_client_id.get(command.client_request_id)
-                if previous_request_id is not None:
-                    previous = self._results.get(previous_request_id)
-                    if previous is not None:
-                        if (
-                            self._fingerprints_by_client_id.get(command.client_request_id)
-                            != fingerprint
-                        ):
-                            raise InvalidHelpRequestPayload(
-                                "client_request_id cannot be reused for different request data",
-                            )
-                        return self._receipt(previous)
-                if len(self._results) >= self._max_results:
-                    oldest_request_id = min(
-                        self._results,
-                        key=lambda candidate: self._results[candidate].updated_at,
-                    )
-                    oldest = self._results[oldest_request_id]
-                    del self._results[oldest_request_id]
-                    self._request_ids_by_client_id.pop(
-                        oldest.client_request_id,
-                        None,
-                    )
-                    self._fingerprints_by_client_id.pop(oldest.client_request_id, None)
-                self._results[request_id] = result
-                self._request_ids_by_client_id[command.client_request_id] = request_id
-                self._fingerprints_by_client_id[command.client_request_id] = fingerprint
-            return self._receipt(result)
+            try:
+                stored = self._repository.create_or_get(
+                    result,
+                    fingerprint,
+                    now + self._result_ttl,
+                    now,
+                )
+            except ClientRequestConflictError as error:
+                raise InvalidHelpRequestPayload(str(error)) from error
+            return self._receipt(stored)
         finally:
             image[:] = b"\x00" * len(image)
 
     def get_result(self, request_id: UUID) -> HelpRequestResult:
         """Return status metadata without retaining or re-reading the image."""
-        with self._results_lock:
-            result = self._results.get(request_id)
+        result = self._repository.get(request_id, self._clock())
         if result is None:
             raise HelpRequestNotFound(str(request_id))
         return result
@@ -133,11 +121,7 @@ class HelpRequestService:
         status: HelpRequestProcessingStatus | None = None,
     ) -> tuple[HelpRequestResult, ...]:
         """Return metadata snapshots for an internal reviewer or worker."""
-        with self._results_lock:
-            values = tuple(self._results.values())
-        if status is not None:
-            values = tuple(value for value in values if value.processing_status is status)
-        return tuple(sorted(values, key=lambda value: value.updated_at, reverse=True))
+        return self._repository.list(status, self._clock())
 
     def process(
         self,
@@ -193,17 +177,17 @@ class HelpRequestService:
         guidance: HelpRequestGuidance | None = None,
         human_review_reason: str | None = None,
     ) -> HelpRequestResult:
-        with self._results_lock:
-            result = self._results.get(request_id)
-            if result is None:
-                raise HelpRequestNotFound(str(request_id))
-            updated = result.transition(
-                status,
-                self._clock(),
-                guidance=guidance,
-                human_review_reason=human_review_reason,
-            )
-            self._results[request_id] = updated
+        now = self._clock()
+        result = self._repository.get(request_id, now)
+        if result is None:
+            raise HelpRequestNotFound(str(request_id))
+        updated = result.transition(
+            status,
+            now,
+            guidance=guidance,
+            human_review_reason=human_review_reason,
+        )
+        self._repository.save(updated, now)
         return updated
 
     @staticmethod
