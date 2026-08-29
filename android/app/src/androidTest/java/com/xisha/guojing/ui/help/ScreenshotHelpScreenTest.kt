@@ -14,7 +14,11 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import com.xisha.guojing.privacy.InMemoryScreenshot
+import com.xisha.guojing.privacy.NormalizedRedaction
+import com.xisha.guojing.privacy.OcrPrivacySuggestion
+import com.xisha.guojing.privacy.PrivacySuggestionDecision
 import com.xisha.guojing.privacy.ScreenshotSanitizationReceipt
+import com.xisha.guojing.privacy.SensitiveTextKind
 import com.xisha.guojing.ui.theme.GuoJingTheme
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -92,6 +96,57 @@ class ScreenshotHelpScreenTest {
         assertEquals("下一步怎么做？", question)
         assertTrue(confirmed)
         assertTrue(!sanitized)
+    }
+
+    @Test
+    fun editing_requires_explicit_decision_for_ocr_privacy_suggestions() {
+        var suggestions by mutableStateOf(
+            listOf(
+                OcrPrivacySuggestion(
+                    id = "ocr-suggestion-1",
+                    kind = SensitiveTextKind.Phone,
+                    bounds = requireNotNull(
+                        NormalizedRedaction.fromDrag(0.1f, 0.2f, 0.8f, 0.3f),
+                    ),
+                    confidence = 0.95,
+                ),
+            ),
+        )
+        val screenshot = testScreenshot()
+        composeRule.setContent {
+            GuoJingTheme {
+                ScreenshotHelpScreen(
+                    uiState = ScreenshotHelpUiState.Editing(
+                        screenshot = screenshot,
+                        question = "这个电话是什么？",
+                        privacySuggestions = suggestions,
+                    ),
+                    onBack = {},
+                    onPickScreenshot = {},
+                    onQuestionChanged = {},
+                    onAddRedaction = {},
+                    onUndoRedaction = {},
+                    onNoSensitiveContentChanged = {},
+                    onSanitize = {},
+                    onAcceptPrivacySuggestion = { id ->
+                        suggestions = suggestions.map { suggestion ->
+                            if (suggestion.id == id) {
+                                suggestion.copy(decision = PrivacySuggestionDecision.Accepted)
+                            } else {
+                                suggestion
+                            }
+                        }
+                    },
+                    onRejectPrivacySuggestion = {},
+                )
+            }
+        }
+
+        composeRule.onNodeWithText("本机发现的可能隐私").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("可能是电话号码").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("生成脱敏副本").performScrollTo().assertIsNotEnabled()
+        composeRule.onNodeWithText("遮住这处").performScrollTo().performClick()
+        composeRule.onNodeWithText("已加入黑色遮挡区域").assertIsDisplayed()
     }
 
     @Test

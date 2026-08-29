@@ -15,6 +15,7 @@ import com.xisha.guojing.data.HttpTutorialCatalogDataSource
 import com.xisha.guojing.data.HttpTutorialDetailDataSource
 import com.xisha.guojing.guidance.AccessibilityGuidanceCoordinator
 import com.xisha.guojing.observation.AccessibilityObservationCoordinator
+import com.xisha.guojing.observation.MlKitScreenshotOcrProvider
 import com.xisha.guojing.observation.isPageObservationServiceEnabled
 import com.xisha.guojing.privacy.AndroidScreenshotPrivacyProcessor
 import com.xisha.guojing.ui.GuoJingApp
@@ -39,6 +40,9 @@ class MainActivity : ComponentActivity() {
     private val helpRequestSender by lazy {
         HttpHelpRequestSender(BuildConfig.API_BASE_URL)
     }
+    private val screenshotOcrProvider by lazy {
+        MlKitScreenshotOcrProvider()
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -53,6 +57,7 @@ class MainActivity : ComponentActivity() {
                     overlayPort = AccessibilityGuidanceCoordinator,
                     screenshotPrivacyProcessor = screenshotPrivacyProcessor,
                     helpRequestSender = helpRequestSender,
+                    screenshotOcrProvider = screenshotOcrProvider,
                     pageObservationServiceEnabled = pageObservationServiceEnabled,
                     onOpenAccessibilitySettings = {
                         startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
@@ -65,6 +70,11 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         refreshPageObservationStatus()
+    }
+
+    override fun onDestroy() {
+        screenshotOcrProvider.close()
+        super.onDestroy()
     }
 
     private fun refreshPageObservationStatus() {

@@ -63,6 +63,12 @@ interface ScreenshotOcrProvider : AutoCloseable {
     override fun close()
 }
 
+object DisabledScreenshotOcrProvider : ScreenshotOcrProvider {
+    override suspend fun recognize(source: InMemoryScreenshot): List<OcrTextBlock> = emptyList()
+
+    override fun close() = Unit
+}
+
 private fun Text.Line.toOcrTextBlock(width: Int, height: Int): OcrTextBlock? {
     val value = text.trim()
     val bounds = boundingBox ?: return null

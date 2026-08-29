@@ -8,6 +8,9 @@ import com.xisha.guojing.data.HelpRequestReceipt
 import com.xisha.guojing.data.HelpRequestSender
 import com.xisha.guojing.data.HelpRequestSubmission
 import com.xisha.guojing.ui.catalog.MainDispatcherRule
+import com.xisha.guojing.observation.NormalizedScreenBounds
+import com.xisha.guojing.observation.OcrTextBlock
+import com.xisha.guojing.observation.ScreenshotOcrProvider
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
@@ -116,6 +119,100 @@ class ScreenshotHelpViewModelTest {
         }
 
     @Test
+    fun every_ocr_privacy_suggestion_requires_a_decision_before_sanitizing() =
+        runTest(mainDispatcherRule.dispatcher) {
+            val processor = FakeScreenshotPrivacyProcessor()
+            val ocrProvider = FakeScreenshotOcrProvider(
+                blocks = listOf(
+                    OcrTextBlock(
+                        text = "电话 13800138000",
+                        confidence = 0.95,
+                        normalizedBounds = NormalizedScreenBounds(0.1, 0.2, 0.8, 0.3),
+                    ),
+                ),
+            )
+            val viewModel = ScreenshotHelpViewModel(
+                processor = processor,
+                ocrProvider = ocrProvider,
+            )
+            viewModel.importScreenshot("content://picker/42")
+            advanceUntilIdle()
+
+            viewModel.updateQuestion("下一步应该点哪里？")
+            viewModel.setNoSensitiveContentConfirmed(true)
+            viewModel.sanitize()
+            advanceUntilIdle()
+
+            assertEquals(0, processor.sanitizeCalls)
+            val pending = viewModel.uiState.value as ScreenshotHelpUiState.Editing
+            assertEquals(1, pending.privacySuggestions.size)
+            assertFalse(pending.canSanitize)
+
+            viewModel.acceptPrivacySuggestion(pending.privacySuggestions.single().id)
+            val accepted = viewModel.uiState.value as ScreenshotHelpUiState.Editing
+            assertEquals(1, accepted.redactions.size)
+            assertTrue(accepted.canSanitize)
+
+            viewModel.sanitize()
+            advanceUntilIdle()
+            val ready = viewModel.uiState.value as ScreenshotHelpUiState.Ready
+            assertEquals(1, processor.sanitizeCalls)
+            assertEquals(1, ready.receipt.redactionCount)
+        }
+
+    @Test
+    fun rejected_ocr_suggestion_can_be_replaced_by_explicit_no_sensitive_confirmation() =
+        runTest(mainDispatcherRule.dispatcher) {
+            val processor = FakeScreenshotPrivacyProcessor()
+            val viewModel = ScreenshotHelpViewModel(
+                processor = processor,
+                ocrProvider = FakeScreenshotOcrProvider(
+                    blocks = listOf(
+                        OcrTextBlock(
+                            text = "订单号",
+                            confidence = 0.9,
+                            normalizedBounds = NormalizedScreenBounds(0.1, 0.2, 0.8, 0.3),
+                        ),
+                    ),
+                ),
+            )
+            viewModel.importScreenshot("content://picker/42")
+            advanceUntilIdle()
+            val editing = viewModel.uiState.value as ScreenshotHelpUiState.Editing
+            viewModel.rejectPrivacySuggestion(editing.privacySuggestions.single().id)
+            viewModel.updateQuestion("这个页面怎么操作？")
+            viewModel.setNoSensitiveContentConfirmed(true)
+            viewModel.sanitize()
+            advanceUntilIdle()
+
+            val ready = viewModel.uiState.value as ScreenshotHelpUiState.Ready
+            assertEquals(1, processor.sanitizeCalls)
+            assertEquals(0, ready.receipt.redactionCount)
+            assertTrue(ready.receipt.noSensitiveContentConfirmed)
+        }
+
+    @Test
+    fun ocr_failure_does_not_block_manual_privacy_review() =
+        runTest(mainDispatcherRule.dispatcher) {
+            val processor = FakeScreenshotPrivacyProcessor()
+            val viewModel = ScreenshotHelpViewModel(
+                processor = processor,
+                ocrProvider = FakeScreenshotOcrProvider(fail = true),
+            )
+            viewModel.importScreenshot("content://picker/42")
+            advanceUntilIdle()
+            val editing = viewModel.uiState.value as ScreenshotHelpUiState.Editing
+            assertEquals(ScreenshotHelpError.OcrFailed, editing.error)
+
+            viewModel.updateQuestion("怎么操作？")
+            viewModel.setNoSensitiveContentConfirmed(true)
+            viewModel.sanitize()
+            advanceUntilIdle()
+
+            assertTrue(viewModel.uiState.value is ScreenshotHelpUiState.Ready)
+        }
+
+    @Test
     fun discard_best_effort_erases_the_session_image() =
         runTest(mainDispatcherRule.dispatcher) {
             val processor = FakeScreenshotPrivacyProcessor()
@@ -217,6 +314,18 @@ class ScreenshotHelpViewModelTest {
             height = 200,
             sha256 = digestCharacter.toString().repeat(64),
         )
+    }
+
+    private class FakeScreenshotOcrProvider(
+        private val blocks: List<OcrTextBlock> = emptyList(),
+        private val fail: Boolean = false,
+    ) : ScreenshotOcrProvider {
+        override suspend fun recognize(source: InMemoryScreenshot): List<OcrTextBlock> {
+            if (fail) error("OCR unavailable")
+            return blocks
+        }
+
+        override fun close() = Unit
     }
 
     private class FakeHelpRequestSender(

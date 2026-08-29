@@ -58,6 +58,8 @@ import androidx.compose.ui.unit.dp
 import com.xisha.guojing.data.HelpRequestIntent
 import com.xisha.guojing.privacy.InMemoryScreenshot
 import com.xisha.guojing.privacy.NormalizedRedaction
+import com.xisha.guojing.privacy.OcrPrivacySuggestion
+import com.xisha.guojing.privacy.PrivacySuggestionDecision
 
 @Composable
 fun ScreenshotHelpScreen(
@@ -72,6 +74,8 @@ fun ScreenshotHelpScreen(
     onIntentSelected: (HelpRequestIntent) -> Unit = {},
     onSendConsentChanged: (Boolean) -> Unit = {},
     onSend: () -> Unit = {},
+    onAcceptPrivacySuggestion: (String) -> Unit = {},
+    onRejectPrivacySuggestion: (String) -> Unit = {},
 ) {
     Surface(
         modifier = Modifier.fillMaxSize(),
@@ -104,6 +108,8 @@ fun ScreenshotHelpScreen(
                         onUndoRedaction = onUndoRedaction,
                         onNoSensitiveContentChanged = onNoSensitiveContentChanged,
                         onSanitize = onSanitize,
+                        onAcceptPrivacySuggestion = onAcceptPrivacySuggestion,
+                        onRejectPrivacySuggestion = onRejectPrivacySuggestion,
                     )
                     is ScreenshotHelpUiState.Sanitizing -> {
                         ScreenshotPreview(
@@ -168,7 +174,7 @@ private fun AwaitingContent(
     )
     InfoCard(
         title = "现在不会发送",
-        body = "本模块还没有连接 OCR、视觉模型或 Agent。原图和脱敏副本都只保存在本次内存会话中。",
+        body = "本机 OCR 只用于给你提示可能的隐私区域。原图和 OCR 原文都不会上传；视觉模型和 Agent 还没有接入。",
     )
     if (error == ScreenshotHelpError.ImportFailed) {
         ErrorCard("无法读取这张图片，请重新选择一张截图。")
@@ -192,6 +198,8 @@ private fun EditingContent(
     onUndoRedaction: () -> Unit,
     onNoSensitiveContentChanged: (Boolean) -> Unit,
     onSanitize: () -> Unit,
+    onAcceptPrivacySuggestion: (String) -> Unit,
+    onRejectPrivacySuggestion: (String) -> Unit,
 ) {
     var addingRedaction by remember(state.screenshot) { mutableStateOf(false) }
     Text(
@@ -219,6 +227,9 @@ private fun EditingContent(
     ScreenshotPreview(
         screenshot = state.screenshot,
         redactions = state.redactions,
+        suggestions = state.privacySuggestions.filter {
+            it.decision == PrivacySuggestionDecision.Pending
+        },
         contentDescription = "待脱敏截图",
         onAddRedaction = if (addingRedaction) {
             { redaction ->
@@ -229,6 +240,13 @@ private fun EditingContent(
             null
         },
     )
+    if (state.privacySuggestions.isNotEmpty()) {
+        PrivacySuggestionSection(
+            suggestions = state.privacySuggestions,
+            onAccept = onAcceptPrivacySuggestion,
+            onReject = onRejectPrivacySuggestion,
+        )
+    }
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceBetween,
@@ -246,7 +264,10 @@ private fun EditingContent(
             Text("撤销上一处")
         }
     }
-    if (state.redactions.isEmpty()) {
+    if (state.redactions.isEmpty() && state.privacySuggestions.none {
+            it.decision == PrivacySuggestionDecision.Pending
+        }
+    ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -287,6 +308,18 @@ private fun EditingContent(
     if (state.error == ScreenshotHelpError.SanitizationFailed) {
         ErrorCard("脱敏副本生成失败，原图仍只在本次内存会话中，可以重试。")
     }
+    if (state.error == ScreenshotHelpError.OcrFailed) {
+        ErrorCard("本机文字识别没有完成，你仍可以手动框选隐私区域。")
+    }
+    if (state.privacySuggestions.any {
+            it.decision == PrivacySuggestionDecision.Pending
+        }
+    ) {
+        InfoCard(
+            title = "请先处理文字识别建议",
+            body = "每一条建议都要选择“遮住这处”或“不是隐私”，确认后才能生成脱敏副本。",
+        )
+    }
     Button(
         onClick = onSanitize,
         enabled = state.canSanitize,
@@ -307,6 +340,64 @@ private fun EditingContent(
 }
 
 private const val QUESTION_INPUT_TEST_TAG = "screenshot_question_input"
+
+@Composable
+private fun PrivacySuggestionSection(
+    suggestions: List<OcrPrivacySuggestion>,
+    onAccept: (String) -> Unit,
+    onReject: (String) -> Unit,
+) {
+    InfoCard(
+        title = "本机发现的可能隐私",
+        body = "这些只是识别建议，不会自动遮挡。请逐条确认，橙色框表示还没有决定。",
+    )
+    suggestions.forEach { suggestion ->
+        val decision = suggestion.decision
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceContainer,
+            ),
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(
+                    text = "可能是${suggestion.kind.displayName}",
+                    style = MaterialTheme.typography.titleMedium,
+                )
+                Text(
+                    text = "本机识别把握约 ${(suggestion.confidence * 100).toInt()}%",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                when (decision) {
+                    PrivacySuggestionDecision.Pending -> Row(
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        Button(onClick = { onAccept(suggestion.id) }) {
+                            Text("遮住这处")
+                        }
+                        OutlinedButton(onClick = { onReject(suggestion.id) }) {
+                            Text("不是隐私")
+                        }
+                    }
+                    PrivacySuggestionDecision.Accepted -> Text(
+                        text = "已加入黑色遮挡区域",
+                        color = MaterialTheme.colorScheme.primary,
+                        style = MaterialTheme.typography.bodyLarge,
+                    )
+                    PrivacySuggestionDecision.Rejected -> Text(
+                        text = "已忽略这条建议",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodyLarge,
+                    )
+                }
+            }
+        }
+    }
+}
 
 @Composable
 private fun ReadyContent(
@@ -337,7 +428,7 @@ private fun ReadyContent(
     )
     InfoCard(
         title = "尚未发送给 AI",
-        body = "当前只完成了本地脱敏。OCR、视觉模型和基础指引 Agent 将在后续模块接入。",
+        body = "当前只完成了本地脱敏和本机 OCR 建议。OCR 原文不会发送；视觉模型和基础指引 Agent 还没有接入。",
     )
     Text(
         text = "第三步：选择帮助方式",
@@ -447,7 +538,7 @@ private fun SubmittedContent(
     )
     InfoCard(
         title = "服务端处理记录",
-        body = "服务端已校验脱敏副本并立即丢弃图片。当前还没有连接 OCR、视觉模型或 Agent，因此暂时不会返回自动答案。",
+        body = "服务端已校验脱敏副本并立即丢弃图片。服务端还没有连接 OCR、视觉模型或 Agent，因此暂时不会返回自动答案。",
     )
     InfoCard(
         title = "处理分支",
@@ -474,6 +565,7 @@ private fun SubmittedContent(
 private fun ScreenshotPreview(
     screenshot: InMemoryScreenshot,
     redactions: List<NormalizedRedaction> = emptyList(),
+    suggestions: List<OcrPrivacySuggestion> = emptyList(),
     contentDescription: String = "已脱敏截图",
     onAddRedaction: ((NormalizedRedaction) -> Unit)? = null,
 ) {
@@ -550,6 +642,9 @@ private fun ScreenshotPreview(
             redactions.forEach { redaction ->
                 drawRedaction(redaction, borderColor)
             }
+            suggestions.forEach { suggestion ->
+                drawSuggestion(suggestion.bounds)
+            }
             val start = dragStart
             val end = dragEnd
             if (start != null && end != null) {
@@ -580,6 +675,22 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawRedaction(
         topLeft = topLeft,
         size = maskSize,
         style = androidx.compose.ui.graphics.drawscope.Stroke(width = 4.dp.toPx()),
+    )
+}
+
+private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawSuggestion(
+    suggestion: NormalizedRedaction,
+) {
+    val topLeft = Offset(suggestion.left * size.width, suggestion.top * size.height)
+    val suggestionSize = Size(
+        (suggestion.right - suggestion.left) * size.width,
+        (suggestion.bottom - suggestion.top) * size.height,
+    )
+    drawRect(
+        color = Color(0xFFFFA000),
+        topLeft = topLeft,
+        size = suggestionSize,
+        style = androidx.compose.ui.graphics.drawscope.Stroke(width = 5.dp.toPx()),
     )
 }
 

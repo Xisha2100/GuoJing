@@ -9,8 +9,12 @@ import com.xisha.guojing.data.DisabledHelpRequestSender
 import com.xisha.guojing.data.HelpRequestIntent
 import com.xisha.guojing.data.HelpRequestSender
 import com.xisha.guojing.data.HelpRequestSubmission
+import com.xisha.guojing.observation.DisabledScreenshotOcrProvider
+import com.xisha.guojing.observation.ScreenshotOcrProvider
 import com.xisha.guojing.privacy.InMemoryScreenshot
 import com.xisha.guojing.privacy.NormalizedRedaction
+import com.xisha.guojing.privacy.OcrPrivacySuggestionClassifier
+import com.xisha.guojing.privacy.PrivacySuggestionDecision
 import com.xisha.guojing.privacy.ScreenshotPrivacyProcessor
 import com.xisha.guojing.privacy.ScreenshotSanitizationReceipt
 import kotlinx.coroutines.CancellationException
@@ -24,6 +28,9 @@ import kotlinx.coroutines.launch
 class ScreenshotHelpViewModel(
     private val processor: ScreenshotPrivacyProcessor,
     private val sender: HelpRequestSender = DisabledHelpRequestSender,
+    private val ocrProvider: ScreenshotOcrProvider = DisabledScreenshotOcrProvider,
+    private val suggestionClassifier: OcrPrivacySuggestionClassifier =
+        OcrPrivacySuggestionClassifier(),
 ) : ViewModel() {
     private val mutableUiState = MutableStateFlow<ScreenshotHelpUiState>(
         ScreenshotHelpUiState.AwaitingSelection(),
@@ -40,9 +47,23 @@ class ScreenshotHelpViewModel(
         processingJob = viewModelScope.launch {
             var imported: InMemoryScreenshot? = null
             try {
-                imported = processor.importFromPicker(uriString)
+                val screenshot = processor.importFromPicker(uriString)
+                imported = screenshot
+                var ocrFailed = false
+                val ocrSuggestions = try {
+                    suggestionClassifier.classify(ocrProvider.recognize(screenshot))
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (_: Exception) {
+                    ocrFailed = true
+                    emptyList()
+                }
                 ensureActive()
-                mutableUiState.value = ScreenshotHelpUiState.Editing(imported)
+                mutableUiState.value = ScreenshotHelpUiState.Editing(
+                    screenshot = screenshot,
+                    privacySuggestions = ocrSuggestions,
+                    error = if (ocrFailed) ScreenshotHelpError.OcrFailed else null,
+                )
             } catch (error: CancellationException) {
                 imported?.erase()
                 throw error
@@ -76,14 +97,66 @@ class ScreenshotHelpViewModel(
     fun undoLastRedaction() {
         val editing = mutableUiState.value as? ScreenshotHelpUiState.Editing ?: return
         if (editing.redactions.isEmpty()) return
+        val removed = editing.redactions.last()
         mutableUiState.value = editing.copy(
             redactions = editing.redactions.dropLast(1),
+            privacySuggestions = editing.privacySuggestions.map { suggestion ->
+                if (suggestion.decision == PrivacySuggestionDecision.Accepted &&
+                    suggestion.bounds == removed
+                ) {
+                    suggestion.copy(decision = PrivacySuggestionDecision.Pending)
+                } else {
+                    suggestion
+                }
+            },
+            error = null,
+        )
+    }
+
+    fun acceptPrivacySuggestion(suggestionId: String) {
+        val editing = mutableUiState.value as? ScreenshotHelpUiState.Editing ?: return
+        val suggestion = editing.privacySuggestions.firstOrNull { it.id == suggestionId }
+            ?: return
+        if (suggestion.decision != PrivacySuggestionDecision.Pending) return
+        if (editing.redactions.size >= MAX_REDACTIONS) return
+        mutableUiState.value = editing.copy(
+            redactions = editing.redactions + suggestion.bounds,
+            privacySuggestions = editing.privacySuggestions.map {
+                if (it.id == suggestionId) {
+                    it.copy(decision = PrivacySuggestionDecision.Accepted)
+                } else {
+                    it
+                }
+            },
+            noSensitiveContentConfirmed = false,
+            error = null,
+        )
+    }
+
+    fun rejectPrivacySuggestion(suggestionId: String) {
+        val editing = mutableUiState.value as? ScreenshotHelpUiState.Editing ?: return
+        if (editing.privacySuggestions.none {
+                it.id == suggestionId && it.decision == PrivacySuggestionDecision.Pending
+            }
+        ) return
+        mutableUiState.value = editing.copy(
+            privacySuggestions = editing.privacySuggestions.map {
+                if (it.id == suggestionId) {
+                    it.copy(decision = PrivacySuggestionDecision.Rejected)
+                } else {
+                    it
+                }
+            },
             error = null,
         )
     }
 
     fun setNoSensitiveContentConfirmed(confirmed: Boolean) {
         val editing = mutableUiState.value as? ScreenshotHelpUiState.Editing ?: return
+        if (confirmed && editing.privacySuggestions.any {
+                it.decision == PrivacySuggestionDecision.Pending
+            }
+        ) return
         mutableUiState.value = editing.copy(
             noSensitiveContentConfirmed = confirmed,
             error = null,
@@ -203,10 +276,11 @@ class ScreenshotHelpViewModel(
         fun factory(
             processor: ScreenshotPrivacyProcessor,
             sender: HelpRequestSender = DisabledHelpRequestSender,
+            ocrProvider: ScreenshotOcrProvider = DisabledScreenshotOcrProvider,
         ): ViewModelProvider.Factory =
             viewModelFactory {
                 initializer {
-                    ScreenshotHelpViewModel(processor, sender)
+                    ScreenshotHelpViewModel(processor, sender, ocrProvider)
                 }
             }
 

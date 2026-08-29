@@ -21,7 +21,9 @@ import com.xisha.guojing.data.HelpRequestSender
 import com.xisha.guojing.guidance.DisabledGuidanceOverlayPort
 import com.xisha.guojing.guidance.GuidanceOverlayPort
 import com.xisha.guojing.observation.DisabledScreenObservationPort
+import com.xisha.guojing.observation.DisabledScreenshotOcrProvider
 import com.xisha.guojing.observation.ScreenObservationPort
+import com.xisha.guojing.observation.ScreenshotOcrProvider
 import com.xisha.guojing.privacy.DisabledScreenshotPrivacyProcessor
 import com.xisha.guojing.privacy.ScreenshotPrivacyProcessor
 import com.xisha.guojing.ui.catalog.TutorialCatalogScreen
@@ -42,6 +44,7 @@ fun GuoJingApp(
     screenshotPrivacyProcessor: ScreenshotPrivacyProcessor =
         DisabledScreenshotPrivacyProcessor,
     helpRequestSender: HelpRequestSender = DisabledHelpRequestSender,
+    screenshotOcrProvider: ScreenshotOcrProvider = DisabledScreenshotOcrProvider,
     pageObservationServiceEnabled: Boolean = false,
     onOpenAccessibilitySettings: () -> Unit = {},
 ) {
@@ -72,6 +75,7 @@ fun GuoJingApp(
                 factory = ScreenshotHelpViewModel.factory(
                     screenshotPrivacyProcessor,
                     helpRequestSender,
+                    screenshotOcrProvider,
                 ),
             )
             val uiState by screenshotHelpViewModel.uiState.collectAsStateWithLifecycle()
@@ -99,6 +103,8 @@ fun GuoJingApp(
                 onIntentSelected = screenshotHelpViewModel::selectIntent,
                 onSendConsentChanged = screenshotHelpViewModel::setSendConsent,
                 onSend = screenshotHelpViewModel::send,
+                onAcceptPrivacySuggestion = screenshotHelpViewModel::acceptPrivacySuggestion,
+                onRejectPrivacySuggestion = screenshotHelpViewModel::rejectPrivacySuggestion,
             )
         }
 
