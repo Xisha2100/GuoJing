@@ -31,6 +31,17 @@ class TutorialService:
         """Return the Android tutorial catalog."""
         return self._repository.list_published()
 
+    def list_published_for_package(self, package_name: str) -> tuple[PublishedTutorial, ...]:
+        """Load current published graphs for one exact Android package."""
+        if not package_name.strip():
+            raise ValueError("package_name must not be blank")
+        summaries = (
+            summary
+            for summary in self._repository.list_published()
+            if summary.package_name == package_name
+        )
+        return tuple(self._repository.get_published(summary.graph_id) for summary in summaries)
+
     def get_published(self, graph_id: str) -> PublishedTutorial:
         """Return one current Android tutorial."""
         return self._repository.get_published(graph_id)

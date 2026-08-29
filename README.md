@@ -391,6 +391,14 @@ cd android
 
 学习文档：[docs/learning/22-evidence-envelope.md](docs/learning/22-evidence-envelope.md)
 
+### 23：教程检索与版本匹配
+
+- 按 Android 包名加载当前已发布教程，逐节点调用既有确定性锚点匹配。
+- 结合版本兼容评估选择最高分候选；新版本、弱证据、旧节点和无匹配都会返回可解释的停机原因。
+- 稳定排序保证同一证据得到可复现结果，不让模型猜测教程或绕过金融/不可逆操作复核。
+
+学习文档：[docs/learning/23-tutorial-selection.md](docs/learning/23-tutorial-selection.md)
+
 ## 教程 API
 
 管理端先登录；成功响应会设置会话 Cookie 和 CSRF Cookie：
@@ -457,7 +465,7 @@ GET /api/v1/tutorials/{graph_id}
 
 ## 下一步
 
-下一模块将把受控证据接入教程检索与版本匹配：优先选择包名、版本兼容且锚点匹配度最高的已发布教程；不确定时停下并请求人工复核。
+下一模块将定义 LangGraph-compatible 的编排状态和节点边界，把求助、证据、教程匹配和人工复核串成可测试流程；它暂不连接付费模型或第三方自动化。
 
 ## License
 
