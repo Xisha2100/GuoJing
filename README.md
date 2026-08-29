@@ -407,6 +407,15 @@ cd android
 
 学习文档：[docs/learning/24-help-request-workflow.md](docs/learning/24-help-request-workflow.md)
 
+### 25：模型适配器与安全降级
+
+- 定义最小 `GuidanceModel` 端口，模型只接触图片已丢弃后的元数据。
+- 严格解析人工说明 JSON，拒绝未知字段、自动操作步骤和金融/不可逆危险词。
+- 模型异常、超时或输出不合规时统一转人工复核；教程请求不能绕过证据匹配。
+- 当前不绑定模型 SDK，未来可将 LangGraph/Deep Agent、Qwen 或 OpenAI-compatible 客户端包在适配器之后。
+
+学习文档：[docs/learning/25-model-adapter-safety.md](docs/learning/25-model-adapter-safety.md)
+
 ## 教程 API
 
 管理端先登录；成功响应会设置会话 Cookie 和 CSRF Cookie：
@@ -473,7 +482,7 @@ GET /api/v1/tutorials/{graph_id}
 
 ## 下一步
 
-下一模块将定义模型适配器、结构化输出校验和安全降级：模型只能生成受限的人工说明候选，解析失败或触发高风险词时回到人工复核。
+模块 21–25 已完成。下一阶段建议先做一次端到端联调和产品验收，再决定具体模型供应商、真实 Agent SDK 与部署环境；在此之前不应把模型输出直接连到 Android 操作执行。
 
 ## License
 
