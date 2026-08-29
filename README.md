@@ -399,6 +399,14 @@ cd android
 
 学习文档：[docs/learning/23-tutorial-selection.md](docs/learning/23-tutorial-selection.md)
 
+### 24：LangGraph-compatible 求助编排骨架
+
+- 用可注入的 Python 工作流连接求助结果、受控证据、教程匹配和基础指引处理器。
+- 教程分支支持 `awaiting_evidence` 可恢复检查点；不确定或版本变化会停在人审，不重复推进状态。
+- 编排状态不包含截图、OCR 原文或 Android 操作，未来可映射到 LangGraph/Deep Agents 节点而不改变领域规则。
+
+学习文档：[docs/learning/24-help-request-workflow.md](docs/learning/24-help-request-workflow.md)
+
 ## 教程 API
 
 管理端先登录；成功响应会设置会话 Cookie 和 CSRF Cookie：
@@ -465,7 +473,7 @@ GET /api/v1/tutorials/{graph_id}
 
 ## 下一步
 
-下一模块将定义 LangGraph-compatible 的编排状态和节点边界，把求助、证据、教程匹配和人工复核串成可测试流程；它暂不连接付费模型或第三方自动化。
+下一模块将定义模型适配器、结构化输出校验和安全降级：模型只能生成受限的人工说明候选，解析失败或触发高风险词时回到人工复核。
 
 ## License
 
