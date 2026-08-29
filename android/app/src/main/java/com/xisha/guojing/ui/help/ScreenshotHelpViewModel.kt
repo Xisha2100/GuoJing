@@ -5,9 +5,12 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
+import com.xisha.guojing.data.DisabledHelpRequestStatusReader
 import com.xisha.guojing.data.DisabledHelpRequestSender
 import com.xisha.guojing.data.HelpRequestIntent
+import com.xisha.guojing.data.HelpRequestFormatException
 import com.xisha.guojing.data.HelpRequestSender
+import com.xisha.guojing.data.HelpRequestStatusReader
 import com.xisha.guojing.data.HelpRequestSubmission
 import com.xisha.guojing.observation.DisabledScreenshotOcrProvider
 import com.xisha.guojing.observation.ScreenshotOcrProvider
@@ -31,6 +34,7 @@ class ScreenshotHelpViewModel(
     private val ocrProvider: ScreenshotOcrProvider = DisabledScreenshotOcrProvider,
     private val suggestionClassifier: OcrPrivacySuggestionClassifier =
         OcrPrivacySuggestionClassifier(),
+    private val statusReader: HelpRequestStatusReader = DisabledHelpRequestStatusReader,
 ) : ViewModel() {
     private val mutableUiState = MutableStateFlow<ScreenshotHelpUiState>(
         ScreenshotHelpUiState.AwaitingSelection(),
@@ -50,19 +54,25 @@ class ScreenshotHelpViewModel(
                 val screenshot = processor.importFromPicker(uriString)
                 imported = screenshot
                 var ocrFailed = false
-                val ocrSuggestions = try {
-                    suggestionClassifier.classify(ocrProvider.recognize(screenshot))
+                val classification = try {
+                    suggestionClassifier.classifyDetailed(ocrProvider.recognize(screenshot))
                 } catch (error: CancellationException) {
                     throw error
                 } catch (_: Exception) {
                     ocrFailed = true
-                    emptyList()
+                    null
                 }
                 ensureActive()
                 mutableUiState.value = ScreenshotHelpUiState.Editing(
                     screenshot = screenshot,
-                    privacySuggestions = ocrSuggestions,
-                    error = if (ocrFailed) ScreenshotHelpError.OcrFailed else null,
+                    privacySuggestions = classification?.suggestions.orEmpty(),
+                    privacySuggestionsTruncated = classification?.truncated == true,
+                    error = when {
+                        ocrFailed -> ScreenshotHelpError.OcrFailed
+                        classification?.truncated == true ->
+                            ScreenshotHelpError.OcrSuggestionsTruncated
+                        else -> null
+                    },
                 )
             } catch (error: CancellationException) {
                 imported?.erase()
@@ -237,11 +247,54 @@ class ScreenshotHelpViewModel(
                     receipt = ready.receipt,
                     intent = ready.intent,
                     serverReceipt = serverReceipt,
+                    processingStatus = serverReceipt.processingStatus,
                 )
             } catch (error: CancellationException) {
                 throw error
             } catch (_: Exception) {
                 mutableUiState.value = ready.copy(error = ScreenshotHelpError.SendFailed)
+            }
+        }
+    }
+
+    fun refreshStatus() {
+        val submitted = mutableUiState.value as? ScreenshotHelpUiState.Submitted ?: return
+        if (submitted.isRefreshingStatus) return
+        processingJob?.cancel()
+        mutableUiState.value = submitted.copy(
+            isRefreshingStatus = true,
+            statusError = null,
+        )
+        processingJob = viewModelScope.launch {
+            try {
+                val result = statusReader.fetch(submitted.serverReceipt.requestId)
+                if (result.clientRequestId != submitted.serverReceipt.clientRequestId ||
+                    result.intent != submitted.intent ||
+                    result.processingRoute != submitted.serverReceipt.processingRoute
+                ) {
+                    throw HelpRequestFormatException(
+                        "Help request result does not match the submitted receipt",
+                    )
+                }
+                ensureActive()
+                val current = mutableUiState.value as? ScreenshotHelpUiState.Submitted
+                    ?: return@launch
+                mutableUiState.value = current.copy(
+                    processingStatus = result.processingStatus,
+                    guidance = result.guidance,
+                    humanReviewReason = result.humanReviewReason,
+                    isRefreshingStatus = false,
+                    statusError = null,
+                )
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Exception) {
+                val current = mutableUiState.value as? ScreenshotHelpUiState.Submitted
+                    ?: return@launch
+                mutableUiState.value = current.copy(
+                    isRefreshingStatus = false,
+                    statusError = ScreenshotHelpError.StatusFetchFailed,
+                )
             }
         }
     }
@@ -277,10 +330,16 @@ class ScreenshotHelpViewModel(
             processor: ScreenshotPrivacyProcessor,
             sender: HelpRequestSender = DisabledHelpRequestSender,
             ocrProvider: ScreenshotOcrProvider = DisabledScreenshotOcrProvider,
+            statusReader: HelpRequestStatusReader = DisabledHelpRequestStatusReader,
         ): ViewModelProvider.Factory =
             viewModelFactory {
                 initializer {
-                    ScreenshotHelpViewModel(processor, sender, ocrProvider)
+                    ScreenshotHelpViewModel(
+                        processor = processor,
+                        sender = sender,
+                        ocrProvider = ocrProvider,
+                        statusReader = statusReader,
+                    )
                 }
             }
 

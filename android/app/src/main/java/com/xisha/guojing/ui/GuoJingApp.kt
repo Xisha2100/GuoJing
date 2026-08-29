@@ -14,10 +14,12 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import com.xisha.guojing.data.DisabledHelpRequestSender
+import com.xisha.guojing.data.DisabledHelpRequestStatusReader
+import com.xisha.guojing.data.HelpRequestSender
+import com.xisha.guojing.data.HelpRequestStatusReader
 import com.xisha.guojing.data.TutorialCatalogRepository
 import com.xisha.guojing.data.TutorialDetailRepository
-import com.xisha.guojing.data.DisabledHelpRequestSender
-import com.xisha.guojing.data.HelpRequestSender
 import com.xisha.guojing.guidance.DisabledGuidanceOverlayPort
 import com.xisha.guojing.guidance.GuidanceOverlayPort
 import com.xisha.guojing.observation.DisabledScreenObservationPort
@@ -44,6 +46,7 @@ fun GuoJingApp(
     screenshotPrivacyProcessor: ScreenshotPrivacyProcessor =
         DisabledScreenshotPrivacyProcessor,
     helpRequestSender: HelpRequestSender = DisabledHelpRequestSender,
+    helpRequestStatusReader: HelpRequestStatusReader = DisabledHelpRequestStatusReader,
     screenshotOcrProvider: ScreenshotOcrProvider = DisabledScreenshotOcrProvider,
     pageObservationServiceEnabled: Boolean = false,
     onOpenAccessibilitySettings: () -> Unit = {},
@@ -76,6 +79,7 @@ fun GuoJingApp(
                     screenshotPrivacyProcessor,
                     helpRequestSender,
                     screenshotOcrProvider,
+                    helpRequestStatusReader,
                 ),
             )
             val uiState by screenshotHelpViewModel.uiState.collectAsStateWithLifecycle()
@@ -103,6 +107,7 @@ fun GuoJingApp(
                 onIntentSelected = screenshotHelpViewModel::selectIntent,
                 onSendConsentChanged = screenshotHelpViewModel::setSendConsent,
                 onSend = screenshotHelpViewModel::send,
+                onRefreshStatus = screenshotHelpViewModel::refreshStatus,
                 onAcceptPrivacySuggestion = screenshotHelpViewModel::acceptPrivacySuggestion,
                 onRejectPrivacySuggestion = screenshotHelpViewModel::rejectPrivacySuggestion,
             )

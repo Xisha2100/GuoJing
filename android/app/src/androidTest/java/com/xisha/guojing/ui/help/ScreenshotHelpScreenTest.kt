@@ -14,6 +14,9 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import com.xisha.guojing.privacy.InMemoryScreenshot
+import com.xisha.guojing.data.HelpRequestIntent
+import com.xisha.guojing.data.HelpRequestProcessingStatus
+import com.xisha.guojing.data.HelpRequestReceipt
 import com.xisha.guojing.privacy.NormalizedRedaction
 import com.xisha.guojing.privacy.OcrPrivacySuggestion
 import com.xisha.guojing.privacy.PrivacySuggestionDecision
@@ -215,6 +218,53 @@ class ScreenshotHelpScreenTest {
         composeRule.onNodeWithText("发送脱敏副本")
             .performScrollTo()
             .assertIsNotEnabled()
+    }
+
+    @Test
+    fun submitted_screen_explains_processing_status_and_allows_refresh() {
+        var refreshed = false
+        composeRule.setContent {
+            GuoJingTheme {
+                ScreenshotHelpScreen(
+                    uiState = ScreenshotHelpUiState.Submitted(
+                        question = "这里应该点哪里？",
+                        receipt = ScreenshotSanitizationReceipt(
+                            redactionCount = 1,
+                            noSensitiveContentConfirmed = false,
+                            sanitizedSha256 = "e".repeat(64),
+                        ),
+                        intent = HelpRequestIntent.GENERAL_GUIDANCE,
+                        serverReceipt = HelpRequestReceipt(
+                            requestId = "server-request-1",
+                            clientRequestId = "client-request-1",
+                            processingRoute = "general_guidance",
+                            processingStatus = HelpRequestProcessingStatus.RECEIVED,
+                            statusEndpoint = "/api/v1/help-requests/server-request-1",
+                        ),
+                    ),
+                    onBack = {},
+                    onPickScreenshot = {},
+                    onQuestionChanged = {},
+                    onAddRedaction = {},
+                    onUndoRedaction = {},
+                    onNoSensitiveContentChanged = {},
+                    onSanitize = {},
+                    onRefreshStatus = { refreshed = true },
+                )
+            }
+        }
+
+        composeRule.onNodeWithText("当前处理状态")
+            .performScrollTo()
+            .assertIsDisplayed()
+        composeRule.onNodeWithText("已接收，正在等待处理。")
+            .performScrollTo()
+            .assertIsDisplayed()
+        composeRule.onNodeWithText("刷新处理状态")
+            .performScrollTo()
+            .performClick()
+
+        assertTrue(refreshed)
     }
 
     private fun testScreenshot(): InMemoryScreenshot {

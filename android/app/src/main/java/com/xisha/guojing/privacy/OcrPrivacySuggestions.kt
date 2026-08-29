@@ -30,12 +30,21 @@ data class OcrPrivacySuggestion(
     val decision: PrivacySuggestionDecision = PrivacySuggestionDecision.Pending,
 )
 
+data class OcrPrivacyClassification(
+    val suggestions: List<OcrPrivacySuggestion>,
+    val truncated: Boolean,
+)
+
 /**
  * Conservative, local-only privacy hints. These are suggestions rather than proof that a
  * region is sensitive; the user must accept or reject every hint before sanitization.
  */
 class OcrPrivacySuggestionClassifier {
-    fun classify(blocks: List<OcrTextBlock>): List<OcrPrivacySuggestion> = blocks
+    fun classify(blocks: List<OcrTextBlock>): List<OcrPrivacySuggestion> =
+        classifyDetailed(blocks).suggestions
+
+    fun classifyDetailed(blocks: List<OcrTextBlock>): OcrPrivacyClassification {
+        val allSuggestions = blocks
         .mapNotNullIndexed { index, block ->
             val bounds = block.normalizedBounds?.toRedaction() ?: return@mapNotNullIndexed null
             val classification = classifyText(block.text) ?: return@mapNotNullIndexed null
@@ -55,7 +64,11 @@ class OcrPrivacySuggestionClassifier {
                 suggestion.bounds.bottom,
             )
         }
-        .take(MAX_SUGGESTIONS)
+        return OcrPrivacyClassification(
+            suggestions = allSuggestions.take(MAX_SUGGESTIONS),
+            truncated = allSuggestions.size > MAX_SUGGESTIONS,
+        )
+    }
 
     private fun classifyText(value: String): Classification? {
         val text = value.trim()

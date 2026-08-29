@@ -56,6 +56,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.xisha.guojing.data.HelpRequestIntent
+import com.xisha.guojing.data.HelpRequestProcessingStatus
 import com.xisha.guojing.privacy.InMemoryScreenshot
 import com.xisha.guojing.privacy.NormalizedRedaction
 import com.xisha.guojing.privacy.OcrPrivacySuggestion
@@ -74,6 +75,7 @@ fun ScreenshotHelpScreen(
     onIntentSelected: (HelpRequestIntent) -> Unit = {},
     onSendConsentChanged: (Boolean) -> Unit = {},
     onSend: () -> Unit = {},
+    onRefreshStatus: () -> Unit = {},
     onAcceptPrivacySuggestion: (String) -> Unit = {},
     onRejectPrivacySuggestion: (String) -> Unit = {},
 ) {
@@ -130,6 +132,7 @@ fun ScreenshotHelpScreen(
                     is ScreenshotHelpUiState.Submitted -> SubmittedContent(
                         state = uiState,
                         onPickScreenshot = onPickScreenshot,
+                        onRefreshStatus = onRefreshStatus,
                     )
                 }
                 Spacer(Modifier.height(20.dp))
@@ -310,6 +313,9 @@ private fun EditingContent(
     }
     if (state.error == ScreenshotHelpError.OcrFailed) {
         ErrorCard("本机文字识别没有完成，你仍可以手动框选隐私区域。")
+    }
+    if (state.error == ScreenshotHelpError.OcrSuggestionsTruncated) {
+        ErrorCard("这张截图中的隐私提示过多，无法完整确认。请缩小截图范围后重新选择。")
     }
     if (state.privacySuggestions.any {
             it.decision == PrivacySuggestionDecision.Pending
@@ -529,6 +535,7 @@ private fun IntentChoice(
 private fun SubmittedContent(
     state: ScreenshotHelpUiState.Submitted,
     onPickScreenshot: () -> Unit,
+    onRefreshStatus: () -> Unit,
 ) {
     Text(
         text = "求助已送达",
@@ -548,9 +555,44 @@ private fun SubmittedContent(
         },
     )
     InfoCard(
+        title = "当前处理状态",
+        body = processingStatusLabel(state.processingStatus),
+    )
+    state.humanReviewReason?.let { reason ->
+        InfoCard(
+            title = "需要人工复核的原因",
+            body = reason,
+        )
+    }
+    state.guidance?.let { guidance ->
+        Text(
+            text = guidance.title,
+            modifier = Modifier.semantics { heading() },
+            style = MaterialTheme.typography.headlineSmall,
+        )
+        guidance.steps.forEachIndexed { index, step ->
+            InfoCard(
+                title = "第 ${index + 1} 步：${step.title}",
+                body = "${step.instruction}\n\n请你亲自完成这一步，老牌子不会代替点击。",
+            )
+        }
+    }
+    InfoCard(
         title = "请求编号",
         body = state.serverReceipt.requestId,
     )
+    if (state.statusError == ScreenshotHelpError.StatusFetchFailed) {
+        ErrorCard("处理状态暂时无法读取，请稍后重试。")
+    }
+    OutlinedButton(
+        onClick = onRefreshStatus,
+        enabled = !state.isRefreshingStatus,
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(56.dp),
+    ) {
+        Text(if (state.isRefreshingStatus) "正在刷新处理状态……" else "刷新处理状态")
+    }
     Button(
         onClick = onPickScreenshot,
         modifier = Modifier
@@ -559,6 +601,13 @@ private fun SubmittedContent(
     ) {
         Text("再问一个问题")
     }
+}
+
+private fun processingStatusLabel(status: HelpRequestProcessingStatus): String = when (status) {
+    HelpRequestProcessingStatus.RECEIVED -> "已接收，正在等待处理。"
+    HelpRequestProcessingStatus.PROCESSING -> "正在处理，暂时不会自动操作手机。"
+    HelpRequestProcessingStatus.NEEDS_HUMAN_REVIEW -> "需要人工复核，已暂停自动生成指引。"
+    HelpRequestProcessingStatus.GUIDANCE_READY -> "基础指引已生成，请逐步阅读并亲自操作。"
 }
 
 @Composable

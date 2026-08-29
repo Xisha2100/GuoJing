@@ -13,7 +13,10 @@ import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlin.math.max
 import kotlin.math.min
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
 
 /**
  * Local ML Kit adapter. It receives only the session-owned sanitized/in-memory screenshot
@@ -25,32 +28,40 @@ class MlKitScreenshotOcrProvider : ScreenshotOcrProvider {
         TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS),
     )
 
-    override suspend fun recognize(source: InMemoryScreenshot): List<OcrTextBlock> {
-        val bitmap = BitmapFactory.decodeByteArray(
-            source.encodedBytes,
-            0,
-            source.encodedBytes.size,
-        ) ?: throw IllegalArgumentException("the screenshot bytes are not decodable")
-        return try {
-            require(bitmap.width > 0 && bitmap.height > 0)
-            val image = com.google.mlkit.vision.common.InputImage.fromBitmap(bitmap, 0)
-            recognizers
-                .map { recognizer -> recognizer.process(image).awaitResult() }
-                .flatMap { result -> result.textBlocks.flatMap(Text.TextBlock::getLines) }
-                .mapNotNull { line -> line.toOcrTextBlock(bitmap.width, bitmap.height) }
-                .distinctBy { block ->
-                    listOf(
-                        normalize(block.text),
-                        block.normalizedBounds?.left,
-                        block.normalizedBounds?.top,
-                        block.normalizedBounds?.right,
-                        block.normalizedBounds?.bottom,
-                    )
-                }
-        } finally {
-            bitmap.recycle()
+    override suspend fun recognize(source: InMemoryScreenshot): List<OcrTextBlock> =
+        withContext(Dispatchers.Default) {
+            val bitmap = BitmapFactory.decodeByteArray(
+                source.encodedBytes,
+                0,
+                source.encodedBytes.size,
+            ) ?: throw IllegalArgumentException("the screenshot bytes are not decodable")
+            var cancelled = false
+            try {
+                require(bitmap.width > 0 && bitmap.height > 0)
+                val image = com.google.mlkit.vision.common.InputImage.fromBitmap(bitmap, 0)
+                val blocks = recognizers
+                    .map { recognizer -> recognizer.process(image).awaitResult() }
+                    .flatMap { result -> result.textBlocks.flatMap(Text.TextBlock::getLines) }
+                    .mapNotNull { line -> line.toOcrTextBlock(bitmap.width, bitmap.height) }
+                    .distinctBy { block ->
+                        listOf(
+                            normalize(block.text),
+                            block.normalizedBounds?.left,
+                            block.normalizedBounds?.top,
+                            block.normalizedBounds?.right,
+                            block.normalizedBounds?.bottom,
+                        )
+                    }
+                blocks
+            } catch (error: CancellationException) {
+                cancelled = true
+                throw error
+            } finally {
+                // A cancelled ML Kit Task may still hold InputImage. Let it release the
+                // Bitmap naturally instead of recycling native pixels underneath it.
+                if (!cancelled) bitmap.recycle()
+            }
         }
-    }
 
     override fun close() {
         recognizers.forEach { recognizer -> recognizer.close() }

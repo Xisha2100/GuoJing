@@ -13,6 +13,14 @@ import kotlinx.serialization.json.put
 enum class HelpRequestIntent(val wireValue: String) {
     RECORDED_TUTORIAL("recorded_tutorial"),
     GENERAL_GUIDANCE("general_guidance"),
+
+    ;
+
+    companion object {
+        fun fromWire(value: String): HelpRequestIntent =
+            entries.firstOrNull { it.wireValue == value }
+                ?: throw HelpRequestFormatException("Unknown help request intent '$value'")
+    }
 }
 
 data class HelpRequestSubmission(
@@ -26,7 +34,8 @@ data class HelpRequestReceipt(
     val requestId: String,
     val clientRequestId: String,
     val processingRoute: String,
-    val processingStatus: String,
+    val processingStatus: HelpRequestProcessingStatus,
+    val statusEndpoint: String,
 )
 
 fun interface HelpRequestSender {
@@ -77,11 +86,20 @@ class HttpHelpRequestSender internal constructor(
     private fun parseReceipt(payload: String, json: Json): HelpRequestReceipt = try {
         val root = json.parseToJsonElement(payload) as? JsonObject
             ?: throw HelpRequestFormatException("Help request receipt must be a JSON object")
+        val schemaVersion = root.requiredString("schema_version")
+        if (schemaVersion != "1.1") {
+            throw HelpRequestFormatException(
+                "Unsupported help request receipt schema '$schemaVersion'",
+            )
+        }
         HelpRequestReceipt(
             requestId = root.requiredString("request_id"),
             clientRequestId = root.requiredString("client_request_id"),
             processingRoute = root.requiredString("processing_route"),
-            processingStatus = root.requiredString("processing_status"),
+            processingStatus = HelpRequestProcessingStatus.fromWire(
+                root.requiredString("processing_status"),
+            ),
+            statusEndpoint = root.requiredString("status_endpoint"),
         )
     } catch (error: HelpRequestFormatException) {
         throw error

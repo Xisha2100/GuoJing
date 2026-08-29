@@ -298,7 +298,7 @@ cd android
 - Android 端将“查找已录制教程”和“没有教程，先看基础指引”建模为两个确定性路由，不让模型猜意图。
 - 只有用户勾选发送确认后，客户端才会把本地脱敏 JPEG 发送到 `/api/v1/help-requests`。
 - 后端限制图片为 JPEG、最长边 1440、最多 8 MiB，并校验 Base64、JPEG 标记和 SHA-256；处理完成后立即清零临时缓冲，不写数据库或对象存储。
-- 服务端只返回“已接收、下一步路由和图片已丢弃”的收据，明确标记 `accepted_no_model`，不冒充 OCR、视觉模型或 Agent 已经回答。
+- 服务端只返回“已接收、下一步路由和图片已丢弃”的收据；当前响应以 `received` 状态进入可查询的处理生命周期，不冒充 OCR、视觉模型或 Agent 已经回答。
 
 学习文档：[docs/learning/12-help-request-contract.md](docs/learning/12-help-request-contract.md)
 
@@ -328,6 +328,50 @@ cd android
 - Compose 和 ViewModel 测试覆盖建议可见性、接受/拒绝状态和隐私门槛。
 
 学习文档：[docs/learning/15-ocr-privacy-suggestions.md](docs/learning/15-ocr-privacy-suggestions.md)
+
+### 16：截图求助处理结果契约
+
+- 定义 `received`、`processing`、`needs_human_review` 和 `guidance_ready` 四个受限处理状态，状态只能向前迁移。
+- 新增状态查询接口；服务端只暂存有限的请求元数据，不保存截图，重启后结果会失效。
+- 基础指引只允许返回需要用户亲自完成的说明步骤，不携带坐标、手势、Accessibility 操作或支付命令。
+- Android 提供严格 JSON parser 和“刷新处理状态”入口，未知状态或不安全的 guidance 形状会 fail closed。
+
+学习文档：[docs/learning/16-help-request-processing-results.md](docs/learning/16-help-request-processing-results.md)
+
+### 17：求助处理器端口与确定性安全分支
+
+- 用 `HelpRequestProcessor` 端口隔离请求生命周期和未来的 OCR、检索或 DeepAgent 实现。
+- 处理器只接收图片已丢弃后的元数据；录制教程请求在缺少页面证据时进入人工复核。
+- 通用求助请求可以使用已审核的本地基础指引目录，仍然只返回人工操作说明。
+- `HelpRequestService.process()` 统一执行 `received → processing → review/guidance`，处理器不能自行修改状态。
+
+学习文档：[docs/learning/17-help-request-processor.md](docs/learning/17-help-request-processor.md)
+
+### 18：无模型基础指引目录
+
+- 将没有已录制教程的请求路由到小型、可审阅的基础指引目录。
+- 指引内容由普通文本步骤组成，不包含坐标、手势、节点动作或自动化函数。
+- 录制教程路径不会因为缺少截图而猜测下一步，而是明确转人工复核。
+
+学习文档：[docs/learning/18-basic-guidance-catalog.md](docs/learning/18-basic-guidance-catalog.md)
+
+### 19：管理员人工复核闭环
+
+- 管理员通过现有会话和 CSRF 保护读取待复核求助元数据。
+- 管理员只能发布经过领域规则校验的人工指引，服务端不会把截图或问题正文暴露给复核接口。
+- 危险的支付、转账、密码、验证码、账号删除等操作词会被领域层拒绝，不能仅靠前端约束。
+- 发布动作写入既有管理员审计日志，便于后续家属端和审核工作台复用。
+
+学习文档：[docs/learning/19-human-review.md](docs/learning/19-human-review.md)
+
+### 20：端到端安全收口
+
+- 重复提交复用同一个 `client_request_id` 的服务端收据，降低网络重试造成重复处理的风险。
+- Android 状态查询校验请求 ID、客户端 ID、意图和处理路由的一致性，错配响应 fail closed。
+- Android 端同样拒绝危险指引文字，并在隐私建议超过上限时阻止发送而不是静默截断。
+- Python、Android JVM、Lint 和设备测试共同覆盖提交、处理、复核、发布和失败路径。
+
+学习文档：[docs/learning/20-end-to-end-hardening.md](docs/learning/20-end-to-end-hardening.md)
 
 ## 教程 API
 
@@ -395,7 +439,7 @@ GET /api/v1/tutorials/{graph_id}
 
 ## 下一步
 
-下一模块将定义截图求助的处理结果契约，让客户端能查询“已接收、处理中、需要人工复核或已生成基础指引”等状态；结果仍不能绕过用户亲自操作、页面证据验证和金融/不可逆动作拦截。
+模块 20 完成后，下一阶段才适合评估真实 OCR 证据上传、教程检索和 DeepAgent 编排。任何新处理器仍必须通过同一状态机、人工复核和金融/不可逆动作拦截。
 
 ## License
 

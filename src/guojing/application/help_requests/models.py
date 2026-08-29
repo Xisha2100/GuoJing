@@ -4,7 +4,11 @@ from dataclasses import dataclass
 from datetime import datetime
 from uuid import UUID
 
-from guojing.domain.help_requests import HelpRequestIntent, HelpRequestProcessingRoute
+from guojing.domain.help_requests import (
+    HelpRequestIntent,
+    HelpRequestProcessingRoute,
+    HelpRequestProcessingStatus,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -16,5 +20,5 @@ class HelpRequestReceipt:
     intent: HelpRequestIntent
     processing_route: HelpRequestProcessingRoute
     received_at: datetime
+    processing_status: HelpRequestProcessingStatus = HelpRequestProcessingStatus.RECEIVED
     image_disposition: str = "discarded_after_validation"
-    processing_status: str = "accepted_no_model"

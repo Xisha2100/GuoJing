@@ -11,6 +11,7 @@ import androidx.compose.runtime.setValue
 import com.xisha.guojing.data.DefaultTutorialCatalogRepository
 import com.xisha.guojing.data.DefaultTutorialDetailRepository
 import com.xisha.guojing.data.HttpHelpRequestSender
+import com.xisha.guojing.data.HttpHelpRequestStatusReader
 import com.xisha.guojing.data.HttpTutorialCatalogDataSource
 import com.xisha.guojing.data.HttpTutorialDetailDataSource
 import com.xisha.guojing.guidance.AccessibilityGuidanceCoordinator
@@ -40,6 +41,9 @@ class MainActivity : ComponentActivity() {
     private val helpRequestSender by lazy {
         HttpHelpRequestSender(BuildConfig.API_BASE_URL)
     }
+    private val helpRequestStatusReader by lazy {
+        HttpHelpRequestStatusReader(BuildConfig.API_BASE_URL)
+    }
     private val screenshotOcrProvider by lazy {
         MlKitScreenshotOcrProvider()
     }
@@ -57,6 +61,7 @@ class MainActivity : ComponentActivity() {
                     overlayPort = AccessibilityGuidanceCoordinator,
                     screenshotPrivacyProcessor = screenshotPrivacyProcessor,
                     helpRequestSender = helpRequestSender,
+                    helpRequestStatusReader = helpRequestStatusReader,
                     screenshotOcrProvider = screenshotOcrProvider,
                     pageObservationServiceEnabled = pageObservationServiceEnabled,
                     onOpenAccessibilitySettings = {

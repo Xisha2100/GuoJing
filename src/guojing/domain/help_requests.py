@@ -1,6 +1,8 @@
 """Privacy-bound value objects for screenshot help requests."""
 
+import re
 from dataclasses import dataclass
+from datetime import datetime
 from enum import StrEnum
 from hashlib import sha256
 from uuid import UUID
@@ -23,6 +25,146 @@ class HelpRequestProcessingRoute(StrEnum):
 
     TUTORIAL_MATCH = "tutorial_match"
     GENERAL_GUIDANCE = "general_guidance"
+
+
+class HelpRequestProcessingStatus(StrEnum):
+    """Observable lifecycle states for a submitted help request."""
+
+    RECEIVED = "received"
+    PROCESSING = "processing"
+    NEEDS_HUMAN_REVIEW = "needs_human_review"
+    GUIDANCE_READY = "guidance_ready"
+
+
+_UNSAFE_GUIDANCE_PATTERN = re.compile(
+    r"(?:转账|付款|支付|发红包|删除账号|注销账号|输入密码|输入验证码|确认购买|立即下单)",
+)
+
+
+def find_unsafe_guidance_terms(value: str) -> tuple[str, ...]:
+    """Return dangerous operations that must never become automatic guidance."""
+    return tuple(
+        dict.fromkeys(match.group(0) for match in _UNSAFE_GUIDANCE_PATTERN.finditer(value))
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class HelpRequestGuidanceStep:
+    """A manual, reviewable instruction returned by a future processor.
+
+    The contract intentionally has no node action, gesture, coordinate or
+    payment command. A client may explain this step, but the user must still
+    operate the target application and the execution engine must verify the
+    resulting page before advancing.
+    """
+
+    step_id: str
+    title: str
+    instruction: str
+    requires_manual_action: bool = True
+
+    def __post_init__(self) -> None:
+        if not self.step_id.strip() or len(self.step_id) > 64:
+            raise ValueError("guidance step_id must contain 1 to 64 characters")
+        if not self.title.strip() or len(self.title) > 120:
+            raise ValueError("guidance title must contain 1 to 120 characters")
+        if not self.instruction.strip() or len(self.instruction) > 500:
+            raise ValueError("guidance instruction must contain 1 to 500 characters")
+        if not self.requires_manual_action:
+            raise ValueError("guidance steps must require manual user action")
+        unsafe_terms = find_unsafe_guidance_terms(f"{self.title}\n{self.instruction}")
+        if unsafe_terms:
+            joined = ", ".join(unsafe_terms)
+            raise ValueError(f"guidance contains blocked irreversible operations: {joined}")
+
+
+@dataclass(frozen=True, slots=True)
+class HelpRequestGuidance:
+    """A bounded list of explanatory steps, never an executable plan."""
+
+    title: str
+    steps: tuple[HelpRequestGuidanceStep, ...]
+
+    def __post_init__(self) -> None:
+        if not self.title.strip() or len(self.title) > 160:
+            raise ValueError("guidance title must contain 1 to 160 characters")
+        if not 1 <= len(self.steps) <= 20:
+            raise ValueError("guidance must contain 1 to 20 steps")
+
+
+@dataclass(frozen=True, slots=True)
+class HelpRequestResult:
+    """Status metadata retained after the sanitized image is discarded."""
+
+    request_id: UUID
+    client_request_id: UUID
+    intent: HelpRequestIntent
+    processing_route: HelpRequestProcessingRoute
+    processing_status: HelpRequestProcessingStatus
+    received_at: datetime
+    updated_at: datetime
+    guidance: HelpRequestGuidance | None = None
+    human_review_reason: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.updated_at < self.received_at:
+            raise ValueError("updated_at cannot be earlier than received_at")
+        if self.processing_status is HelpRequestProcessingStatus.GUIDANCE_READY:
+            if self.guidance is None:
+                raise ValueError("guidance_ready results must include guidance")
+            if self.human_review_reason is not None:
+                raise ValueError("guidance_ready results cannot include a review reason")
+        elif self.guidance is not None:
+            raise ValueError("guidance is only available when guidance is ready")
+        if self.processing_status is HelpRequestProcessingStatus.NEEDS_HUMAN_REVIEW:
+            if not self.human_review_reason or not self.human_review_reason.strip():
+                raise ValueError("human review results need a non-empty reason")
+        elif self.human_review_reason is not None:
+            raise ValueError("a review reason is only available during human review")
+
+    def transition(
+        self,
+        status: HelpRequestProcessingStatus,
+        updated_at: datetime,
+        *,
+        guidance: HelpRequestGuidance | None = None,
+        human_review_reason: str | None = None,
+    ) -> "HelpRequestResult":
+        """Apply one allowed forward-only transition."""
+        if updated_at < self.updated_at:
+            raise ValueError("updated_at cannot move backwards")
+        allowed = {
+            HelpRequestProcessingStatus.RECEIVED: {
+                HelpRequestProcessingStatus.PROCESSING,
+            },
+            HelpRequestProcessingStatus.PROCESSING: {
+                HelpRequestProcessingStatus.NEEDS_HUMAN_REVIEW,
+                HelpRequestProcessingStatus.GUIDANCE_READY,
+            },
+            HelpRequestProcessingStatus.NEEDS_HUMAN_REVIEW: {
+                HelpRequestProcessingStatus.GUIDANCE_READY,
+            },
+            HelpRequestProcessingStatus.GUIDANCE_READY: set(),
+        }
+        if status not in allowed[self.processing_status]:
+            raise ValueError(
+                f"cannot transition from {self.processing_status} to {status}",
+            )
+        return HelpRequestResult(
+            request_id=self.request_id,
+            client_request_id=self.client_request_id,
+            intent=self.intent,
+            processing_route=self.processing_route,
+            processing_status=status,
+            received_at=self.received_at,
+            updated_at=updated_at,
+            guidance=guidance,
+            human_review_reason=human_review_reason,
+        )
+
+    def matches_request(self, request_id: UUID, client_request_id: UUID) -> bool:
+        """Check both server and client identifiers before applying a response."""
+        return self.request_id == request_id and self.client_request_id == client_request_id
 
 
 @dataclass(frozen=True, slots=True)

@@ -53,6 +53,8 @@ class HelpRequestSenderTest {
         assertTrue(connection.requestBody.contains("\"sanitized_image_base64\":\"/9j/2Q==\""))
         assertEquals("server-request-1", receipt.requestId)
         assertEquals("tutorial_match", receipt.processingRoute)
+        assertEquals(HelpRequestProcessingStatus.RECEIVED, receipt.processingStatus)
+        assertEquals("/api/v1/help-requests/server-request-1", receipt.statusEndpoint)
         assertTrue(connection.disconnected)
     }
 
@@ -83,13 +85,14 @@ class HelpRequestSenderTest {
         val RECEIPT =
             """
             {
-              "schema_version": "1.0",
+              "schema_version": "1.1",
               "request_id": "server-request-1",
               "client_request_id": "client-request-1",
               "intent": "recorded_tutorial",
               "processing_route": "tutorial_match",
-              "processing_status": "accepted_no_model",
+              "processing_status": "received",
               "image_disposition": "discarded_after_validation",
+              "status_endpoint": "/api/v1/help-requests/server-request-1",
               "received_at": "2026-08-26T00:00:00Z"
             }
             """.trimIndent()

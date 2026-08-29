@@ -4,9 +4,12 @@ import com.xisha.guojing.privacy.InMemoryScreenshot
 import com.xisha.guojing.privacy.NormalizedRedaction
 import com.xisha.guojing.privacy.ScreenshotPrivacyProcessor
 import com.xisha.guojing.data.HelpRequestIntent
+import com.xisha.guojing.data.HelpRequestProcessingStatus
 import com.xisha.guojing.data.HelpRequestReceipt
+import com.xisha.guojing.data.HelpRequestResult
 import com.xisha.guojing.data.HelpRequestSender
 import com.xisha.guojing.data.HelpRequestSubmission
+import com.xisha.guojing.data.HelpRequestStatusReader
 import com.xisha.guojing.ui.catalog.MainDispatcherRule
 import com.xisha.guojing.observation.NormalizedScreenBounds
 import com.xisha.guojing.observation.OcrTextBlock
@@ -286,6 +289,82 @@ class ScreenshotHelpViewModelTest {
             assertTrue(ready.screenshot.encodedBytes.any { it != 0.toByte() })
         }
 
+    @Test
+    fun submitted_request_can_refresh_processing_status_without_an_image() =
+        runTest(mainDispatcherRule.dispatcher) {
+            val processor = FakeScreenshotPrivacyProcessor()
+            val statusReader = FakeHelpRequestStatusReader(
+                result = HelpRequestResult(
+                    requestId = "server-request-1",
+                    clientRequestId = "client-request-1",
+                    intent = HelpRequestIntent.GENERAL_GUIDANCE,
+                    processingRoute = "general_guidance",
+                    processingStatus = HelpRequestProcessingStatus.GUIDANCE_READY,
+                    receivedAt = "2026-08-29T00:00:00Z",
+                    updatedAt = "2026-08-29T00:01:00Z",
+                    guidance = com.xisha.guojing.data.HelpRequestGuidance(
+                        title = "基础指引",
+                        steps = listOf(
+                            com.xisha.guojing.data.HelpRequestGuidanceStep(
+                                stepId = "one",
+                                title = "先看标题",
+                                instruction = "请你自己确认页面顶部标题。",
+                            ),
+                        ),
+                    ),
+                ),
+            )
+            val viewModel = ScreenshotHelpViewModel(
+                processor = processor,
+                sender = FakeHelpRequestSender(),
+                statusReader = statusReader,
+            )
+            viewModel.importScreenshot("content://picker/42")
+            advanceUntilIdle()
+            viewModel.updateQuestion("怎么操作？")
+            viewModel.setNoSensitiveContentConfirmed(true)
+            viewModel.sanitize()
+            advanceUntilIdle()
+            viewModel.setSendConsent(true)
+            viewModel.send()
+            advanceUntilIdle()
+
+            viewModel.refreshStatus()
+            advanceUntilIdle()
+
+            val submitted = viewModel.uiState.value as ScreenshotHelpUiState.Submitted
+            assertEquals(HelpRequestProcessingStatus.GUIDANCE_READY, submitted.processingStatus)
+            assertEquals(1, submitted.guidance?.steps?.size)
+            assertEquals("server-request-1", statusReader.lastRequestId)
+        }
+
+    @Test
+    fun failed_status_refresh_keeps_submitted_state_and_exposes_retry_error() =
+        runTest(mainDispatcherRule.dispatcher) {
+            val processor = FakeScreenshotPrivacyProcessor()
+            val viewModel = ScreenshotHelpViewModel(
+                processor = processor,
+                sender = FakeHelpRequestSender(),
+                statusReader = FakeHelpRequestStatusReader(fail = true),
+            )
+            viewModel.importScreenshot("content://picker/42")
+            advanceUntilIdle()
+            viewModel.updateQuestion("怎么操作？")
+            viewModel.setNoSensitiveContentConfirmed(true)
+            viewModel.sanitize()
+            advanceUntilIdle()
+            viewModel.setSendConsent(true)
+            viewModel.send()
+            advanceUntilIdle()
+
+            viewModel.refreshStatus()
+            advanceUntilIdle()
+
+            val submitted = viewModel.uiState.value as ScreenshotHelpUiState.Submitted
+            assertEquals(ScreenshotHelpError.StatusFetchFailed, submitted.statusError)
+            assertFalse(submitted.isRefreshingStatus)
+        }
+
     private class FakeScreenshotPrivacyProcessor(
         private val failSanitization: Boolean = false,
     ) : ScreenshotPrivacyProcessor {
@@ -342,8 +421,22 @@ class ScreenshotHelpViewModelTest {
                 requestId = "server-request-1",
                 clientRequestId = "client-request-1",
                 processingRoute = "general_guidance",
-                processingStatus = "accepted_no_model",
+                processingStatus = HelpRequestProcessingStatus.RECEIVED,
+                statusEndpoint = "/api/v1/help-requests/server-request-1",
             )
+        }
+    }
+
+    private class FakeHelpRequestStatusReader(
+        private val result: HelpRequestResult? = null,
+        private val fail: Boolean = false,
+    ) : HelpRequestStatusReader {
+        var lastRequestId: String? = null
+
+        override suspend fun fetch(requestId: String): HelpRequestResult {
+            lastRequestId = requestId
+            if (fail) error("status unavailable")
+            return requireNotNull(result)
         }
     }
 }

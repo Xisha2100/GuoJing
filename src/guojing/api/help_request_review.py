@@ -1,0 +1,169 @@
+"""Authenticated reviewer endpoints for safe help-request guidance."""
+
+from datetime import datetime
+from typing import Annotated
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel, ConfigDict, Field
+
+from guojing.api.dependencies import (
+    get_admin_auth_service,
+    get_help_request_service,
+    require_admin,
+    require_admin_session,
+)
+from guojing.api.help_requests import HelpRequestResultResponse
+from guojing.application.auth.service import AdminAuthService
+from guojing.application.help_requests.basic_guidance import DeterministicHelpRequestProcessor
+from guojing.application.help_requests.service import HelpRequestNotFound, HelpRequestService
+from guojing.domain.auth import AuthenticatedAdminSession
+from guojing.domain.help_requests import (
+    HelpRequestGuidance,
+    HelpRequestGuidanceStep,
+    HelpRequestProcessingStatus,
+    HelpRequestResult,
+)
+
+router = APIRouter(prefix="/api/v1/admin/help-requests", tags=["help request review"])
+AdminMutationDependency = Annotated[AuthenticatedAdminSession, Depends(require_admin)]
+AdminSessionDependency = Annotated[
+    AuthenticatedAdminSession,
+    Depends(require_admin_session),
+]
+HelpRequestServiceDependency = Annotated[
+    HelpRequestService,
+    Depends(get_help_request_service),
+]
+AuthServiceDependency = Annotated[AdminAuthService, Depends(get_admin_auth_service)]
+
+
+class ReviewApiModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class GuidanceStepRequest(ReviewApiModel):
+    step_id: str = Field(min_length=1, max_length=64)
+    title: str = Field(min_length=1, max_length=120)
+    instruction: str = Field(min_length=1, max_length=500)
+
+    def to_domain(self) -> HelpRequestGuidanceStep:
+        return HelpRequestGuidanceStep(
+            step_id=self.step_id,
+            title=self.title,
+            instruction=self.instruction,
+        )
+
+
+class GuidanceRequest(ReviewApiModel):
+    title: str = Field(min_length=1, max_length=160)
+    steps: list[GuidanceStepRequest] = Field(min_length=1, max_length=20)
+
+    def to_domain(self) -> HelpRequestGuidance:
+        return HelpRequestGuidance(
+            title=self.title,
+            steps=tuple(step.to_domain() for step in self.steps),
+        )
+
+
+class ReviewSummary(ReviewApiModel):
+    request_id: UUID
+    client_request_id: UUID
+    intent: str
+    processing_route: str
+    processing_status: str
+    received_at: datetime
+    updated_at: datetime
+    human_review_reason: str | None
+
+    @classmethod
+    def from_domain(cls, value: HelpRequestResult) -> "ReviewSummary":
+        return cls(
+            request_id=value.request_id,
+            client_request_id=value.client_request_id,
+            intent=value.intent.value,
+            processing_route=value.processing_route.value,
+            processing_status=value.processing_status.value,
+            received_at=value.received_at,
+            updated_at=value.updated_at,
+            human_review_reason=value.human_review_reason,
+        )
+
+
+@router.get("/reviews", response_model=list[ReviewSummary])
+def list_help_request_reviews(
+    _admin: AdminSessionDependency,
+    service: HelpRequestServiceDependency,
+) -> list[ReviewSummary]:
+    """List review metadata without exposing question text or image bytes."""
+    return [
+        ReviewSummary.from_domain(value)
+        for value in service.list_results(
+            status=HelpRequestProcessingStatus.NEEDS_HUMAN_REVIEW,
+        )
+    ]
+
+
+@router.post("/{request_id}/process", response_model=HelpRequestResultResponse)
+def process_help_request(
+    request_id: UUID,
+    _admin: AdminMutationDependency,
+    service: HelpRequestServiceDependency,
+    auth_service: AuthServiceDependency,
+) -> HelpRequestResultResponse:
+    """Run the no-model processor through the same authenticated admin boundary."""
+    try:
+        result = service.process(request_id, DeterministicHelpRequestProcessor())
+    except HelpRequestNotFound as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="help request not found",
+        ) from error
+    except ValueError as error:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
+    auth_service.record_action(
+        _admin,
+        "help_request.processed",
+        "help_request",
+        str(request_id),
+        {"processing_status": result.processing_status.value},
+    )
+    return HelpRequestResultResponse.from_domain(result)
+
+
+@router.post(
+    "/{request_id}/guidance",
+    response_model=HelpRequestResultResponse,
+)
+def publish_reviewed_guidance(
+    request_id: UUID,
+    guidance: GuidanceRequest,
+    admin: AdminMutationDependency,
+    service: HelpRequestServiceDependency,
+    auth_service: AuthServiceDependency,
+) -> HelpRequestResultResponse:
+    """Publish only a validated, manual, non-dangerous review result."""
+    try:
+        domain_guidance = guidance.to_domain()
+    except ValueError as error:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=str(error),
+        ) from error
+    try:
+        result = service.publish_guidance(request_id, domain_guidance)
+    except HelpRequestNotFound as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="help request not found",
+        ) from error
+    except ValueError as error:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
+    auth_service.record_action(
+        admin,
+        "help_request.guidance_published",
+        "help_request",
+        str(request_id),
+        {"step_count": len(guidance.steps)},
+    )
+    return HelpRequestResultResponse.from_domain(result)

@@ -1,6 +1,8 @@
 package com.xisha.guojing.ui.help
 
+import com.xisha.guojing.data.HelpRequestGuidance
 import com.xisha.guojing.data.HelpRequestIntent
+import com.xisha.guojing.data.HelpRequestProcessingStatus
 import com.xisha.guojing.data.HelpRequestReceipt
 import com.xisha.guojing.privacy.InMemoryScreenshot
 import com.xisha.guojing.privacy.NormalizedRedaction
@@ -20,11 +22,13 @@ sealed interface ScreenshotHelpUiState {
         val question: String = "",
         val redactions: List<NormalizedRedaction> = emptyList(),
         val privacySuggestions: List<OcrPrivacySuggestion> = emptyList(),
+        val privacySuggestionsTruncated: Boolean = false,
         val noSensitiveContentConfirmed: Boolean = false,
         val error: ScreenshotHelpError? = null,
     ) : ScreenshotHelpUiState {
         val canSanitize: Boolean
             get() = question.isNotBlank() &&
+                !privacySuggestionsTruncated &&
                 privacySuggestions.none {
                     it.decision == PrivacySuggestionDecision.Pending
                 } &&
@@ -62,12 +66,19 @@ sealed interface ScreenshotHelpUiState {
         val receipt: ScreenshotSanitizationReceipt,
         val intent: HelpRequestIntent,
         val serverReceipt: HelpRequestReceipt,
+        val processingStatus: HelpRequestProcessingStatus = serverReceipt.processingStatus,
+        val guidance: HelpRequestGuidance? = null,
+        val humanReviewReason: String? = null,
+        val isRefreshingStatus: Boolean = false,
+        val statusError: ScreenshotHelpError? = null,
     ) : ScreenshotHelpUiState
 }
 
 enum class ScreenshotHelpError {
     ImportFailed,
     OcrFailed,
+    OcrSuggestionsTruncated,
     SanitizationFailed,
     SendFailed,
+    StatusFetchFailed,
 }

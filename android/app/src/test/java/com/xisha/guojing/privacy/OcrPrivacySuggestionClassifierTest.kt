@@ -60,4 +60,23 @@ class OcrPrivacySuggestionClassifierTest {
 
         assertTrue(suggestions.isEmpty())
     }
+
+    @Test
+    fun reports_when_sensitive_suggestions_are_truncated() {
+        val blocks = (0..20).map { index ->
+            OcrTextBlock(
+                text = "订单号 $index",
+                confidence = 0.9,
+                normalizedBounds = bounds.copy(
+                    top = 0.01 + index * 0.04,
+                    bottom = 0.03 + index * 0.04,
+                ),
+            )
+        }
+
+        val result = classifier.classifyDetailed(blocks)
+
+        assertEquals(20, result.suggestions.size)
+        assertTrue(result.truncated)
+    }
 }

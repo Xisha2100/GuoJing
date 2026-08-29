@@ -9,6 +9,7 @@ from guojing.application.auth.ports import (
     InvalidCsrfTokenError,
 )
 from guojing.application.auth.service import AdminAuthService
+from guojing.application.help_requests.service import HelpRequestService
 from guojing.application.tutorial_drafts.service import TutorialDraftService
 from guojing.application.tutorials.service import TutorialService
 from guojing.core.security import ADMIN_CSRF_COOKIE, ADMIN_CSRF_HEADER, ADMIN_SESSION_COOKIE
@@ -25,6 +26,11 @@ def get_admin_auth_service(request: Request) -> AdminAuthService:
 def get_tutorial_service(request: Request) -> TutorialService:
     """Return the use-case service installed by the composition root."""
     return cast(TutorialService, request.app.state.tutorial_service)
+
+
+def get_help_request_service(request: Request) -> HelpRequestService:
+    """Return the transient help-request service installed at startup."""
+    return cast(HelpRequestService, request.app.state.help_request_service)
 
 
 def get_tutorial_draft_service(request: Request) -> TutorialDraftService:
