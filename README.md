@@ -382,6 +382,15 @@ cd android
 
 学习文档：[docs/learning/21-help-request-persistence.md](docs/learning/21-help-request-persistence.md)
 
+### 22：受控证据 Envelope 与隐私边界
+
+- 用不可变 `EvidenceEnvelope` 表达包名、版本、锚点置信度和归一化边界，不提供 raw OCR、Accessibility 文本或图片字节字段。
+- `local_only` 证据在网络边界 fail closed；只有显式允许联网且未过期的脱敏摘要可以进入后端。
+- 新增证据 API、短 TTL 清理、SQLite Repository 和严格 `schema_version=1.0` DTO。
+- 证据与求助结果分表保存，结果删除时外键级联删除证据，并限制单请求和全局证据数量。
+
+学习文档：[docs/learning/22-evidence-envelope.md](docs/learning/22-evidence-envelope.md)
+
 ## 教程 API
 
 管理端先登录；成功响应会设置会话 Cookie 和 CSRF Cookie：
@@ -448,7 +457,7 @@ GET /api/v1/tutorials/{graph_id}
 
 ## 下一步
 
-下一模块将定义受控证据 Envelope，让本地 OCR 摘要和用户再次确认的脱敏证据能够进入处理器，同时继续禁止原图和 raw OCR 越过隐私边界。任何新处理器仍必须通过同一状态机、人工复核和金融/不可逆动作拦截。
+下一模块将把受控证据接入教程检索与版本匹配：优先选择包名、版本兼容且锚点匹配度最高的已发布教程；不确定时停下并请求人工复核。
 
 ## License
 

@@ -173,3 +173,33 @@ class HelpRequestResultRecord(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     guidance_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     human_review_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class HelpRequestEvidenceRecord(Base):
+    """Persist only normalized anchor evidence, never OCR or node-tree text."""
+
+    __tablename__ = "help_request_evidence"
+    __table_args__ = (
+        Index(
+            "ix_help_request_evidence_request_captured",
+            "request_id",
+            "captured_at",
+        ),
+        Index("ix_help_request_evidence_expires_at", "expires_at"),
+    )
+
+    evidence_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    request_id: Mapped[str] = mapped_column(
+        ForeignKey("help_request_results.request_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    package_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    version_name: Mapped[str] = mapped_column(String(120), nullable=False)
+    version_code: Mapped[int] = mapped_column(nullable=False)
+    source: Mapped[str] = mapped_column(String(40), nullable=False)
+    sharing_policy: Mapped[str] = mapped_column(String(40), nullable=False)
+    structure_score: Mapped[float] = mapped_column(nullable=False)
+    captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    anchors_json: Mapped[str] = mapped_column(Text, nullable=False)
+    sanitized_screenshot_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)

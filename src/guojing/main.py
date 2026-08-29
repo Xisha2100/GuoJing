@@ -8,6 +8,7 @@ from fastapi import FastAPI
 
 from guojing.api.router import api_router
 from guojing.application.auth.service import AdminAuthService
+from guojing.application.help_requests.evidence_service import HelpRequestEvidenceService
 from guojing.application.help_requests.service import HelpRequestService
 from guojing.application.tutorial_drafts.service import TutorialDraftService
 from guojing.application.tutorials.service import TutorialService
@@ -16,6 +17,9 @@ from guojing.infrastructure.persistence.admin_auth_repository import (
     SqlAlchemyAdminAuthRepository,
 )
 from guojing.infrastructure.persistence.database import Database
+from guojing.infrastructure.persistence.help_request_evidence_repository import (
+    SqlAlchemyHelpRequestEvidenceRepository,
+)
 from guojing.infrastructure.persistence.help_request_repository import (
     SqlAlchemyHelpRequestRepository,
 )
@@ -34,6 +38,7 @@ def create_app(
     tutorial_draft_service: TutorialDraftService | None = None,
     admin_auth_service: AdminAuthService | None = None,
     help_request_service: HelpRequestService | None = None,
+    help_request_evidence_service: HelpRequestEvidenceService | None = None,
 ) -> FastAPI:
     """Build an isolated application instance for production or tests."""
     app_settings = settings or Settings()
@@ -43,6 +48,7 @@ def create_app(
         or tutorial_draft_service is None
         or admin_auth_service is None
         or help_request_service is None
+        or help_request_evidence_service is None
     ):
         database = Database(app_settings.database_url)
     if tutorial_service is None:
@@ -65,6 +71,13 @@ def create_app(
         help_request_service = HelpRequestService(
             repository=SqlAlchemyHelpRequestRepository(database),
         )
+    if help_request_evidence_service is None:
+        assert database is not None
+        assert help_request_service is not None
+        help_request_evidence_service = HelpRequestEvidenceService(
+            help_request_service,
+            SqlAlchemyHelpRequestEvidenceRepository(database),
+        )
 
     @asynccontextmanager
     async def lifespan(_application: FastAPI) -> AsyncIterator[None]:
@@ -82,6 +95,7 @@ def create_app(
     application.state.tutorial_draft_service = tutorial_draft_service
     application.state.admin_auth_service = admin_auth_service
     application.state.help_request_service = help_request_service
+    application.state.help_request_evidence_service = help_request_evidence_service
     application.include_router(api_router)
     return application
 

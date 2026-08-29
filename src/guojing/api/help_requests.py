@@ -7,13 +7,20 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel, ConfigDict
 
+from guojing.api.dependencies import get_help_request_evidence_service
 from guojing.application.help_requests.dto import HelpRequestRequest
+from guojing.application.help_requests.evidence_dto import HelpRequestEvidenceRequest
+from guojing.application.help_requests.evidence_service import (
+    HelpRequestEvidenceService,
+    InvalidHelpRequestEvidence,
+)
 from guojing.application.help_requests.models import HelpRequestReceipt
 from guojing.application.help_requests.service import (
     HelpRequestNotFound,
     HelpRequestService,
     InvalidHelpRequestPayload,
 )
+from guojing.domain.evidence import EvidenceBounds, EvidenceEnvelope
 from guojing.domain.help_requests import (
     HelpRequestGuidance,
     HelpRequestGuidanceStep,
@@ -131,6 +138,87 @@ def _service(request: Request) -> HelpRequestService:
 
 
 HelpRequestServiceDependency = Annotated[HelpRequestService, Depends(_service)]
+HelpRequestEvidenceServiceDependency = Annotated[
+    HelpRequestEvidenceService,
+    Depends(get_help_request_evidence_service),
+]
+
+
+class EvidenceBoundsResponse(BaseModel):
+    """Normalized placement metadata without screen text or pixels."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    left: float
+    top: float
+    right: float
+    bottom: float
+
+    @classmethod
+    @classmethod
+    def from_domain(cls, value: EvidenceBounds) -> "EvidenceBoundsResponse":
+        return cls(
+            left=value.left,
+            top=value.top,
+            right=value.right,
+            bottom=value.bottom,
+        )
+
+
+class EvidenceAnchorResponse(BaseModel):
+    """Anchor confidence that is safe to display to a reviewer."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    anchor_id: str
+    confidence: float
+    normalized_bounds: EvidenceBoundsResponse | None = None
+
+
+class HelpRequestEvidenceResponse(BaseModel):
+    """Stored evidence projection; intentionally excludes OCR text and image bytes."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal["1.0"] = "1.0"
+    evidence_id: UUID
+    request_id: UUID
+    package_name: str
+    version_name: str
+    version_code: int
+    source: str
+    sharing_policy: str
+    structure_score: float
+    captured_at: datetime
+    expires_at: datetime
+    anchors: list[EvidenceAnchorResponse]
+
+    @classmethod
+    def from_domain(cls, value: EvidenceEnvelope) -> "HelpRequestEvidenceResponse":
+        return cls(
+            evidence_id=value.evidence_id,
+            request_id=value.request_id,
+            package_name=value.package_name,
+            version_name=value.version_name,
+            version_code=value.version_code,
+            source=value.source.value,
+            sharing_policy=value.sharing_policy.value,
+            structure_score=value.structure_score,
+            captured_at=value.captured_at,
+            expires_at=value.expires_at,
+            anchors=[
+                EvidenceAnchorResponse(
+                    anchor_id=anchor.anchor_id,
+                    confidence=anchor.confidence,
+                    normalized_bounds=(
+                        EvidenceBoundsResponse.from_domain(anchor.normalized_bounds)
+                        if anchor.normalized_bounds is not None
+                        else None
+                    ),
+                )
+                for anchor in value.anchors
+            ],
+        )
 
 
 @router.post(
@@ -157,6 +245,51 @@ def submit_help_request(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=str(error),
         ) from error
+
+
+@router.post(
+    "/{request_id}/evidence",
+    response_model=HelpRequestEvidenceResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def submit_help_request_evidence(
+    request_id: UUID,
+    evidence: HelpRequestEvidenceRequest,
+    response: Response,
+    service: HelpRequestEvidenceServiceDependency,
+) -> HelpRequestEvidenceResponse:
+    """Accept normalized evidence only after an explicit sanitized network decision."""
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Pragma"] = "no-cache"
+    try:
+        envelope = service.record(request_id, evidence.to_domain(request_id))
+    except (InvalidHelpRequestEvidence, ValueError) as error:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=str(error),
+        ) from error
+    return HelpRequestEvidenceResponse.from_domain(envelope)
+
+
+@router.get(
+    "/{request_id}/evidence/latest",
+    response_model=HelpRequestEvidenceResponse,
+)
+def get_latest_help_request_evidence(
+    request_id: UUID,
+    response: Response,
+    service: HelpRequestEvidenceServiceDependency,
+) -> HelpRequestEvidenceResponse:
+    """Return only the newest unexpired semantic envelope."""
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Pragma"] = "no-cache"
+    envelope = service.get_latest(request_id)
+    if envelope is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="help request evidence was not found",
+        )
+    return HelpRequestEvidenceResponse.from_domain(envelope)
 
 
 @router.get(

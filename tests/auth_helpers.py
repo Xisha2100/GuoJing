@@ -9,6 +9,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from guojing.application.auth.service import AdminAuthService
+from guojing.application.help_requests.evidence_service import HelpRequestEvidenceService
 from guojing.application.help_requests.service import HelpRequestService
 from guojing.application.tutorial_drafts.service import TutorialDraftService
 from guojing.application.tutorials.service import TutorialService
@@ -18,6 +19,9 @@ from guojing.infrastructure.persistence.admin_auth_repository import (
     SqlAlchemyAdminAuthRepository,
 )
 from guojing.infrastructure.persistence.database import Database
+from guojing.infrastructure.persistence.help_request_evidence_repository import (
+    SqlAlchemyHelpRequestEvidenceRepository,
+)
 from guojing.infrastructure.persistence.help_request_repository import (
     SqlAlchemyHelpRequestRepository,
 )
@@ -84,6 +88,9 @@ def admin_api_client(
         database,
         maximum_failures=maximum_failures,
     )
+    help_request_service = HelpRequestService(
+        repository=SqlAlchemyHelpRequestRepository(database),
+    )
     app = create_app(
         Settings(
             environment=AppEnvironment.TEST,
@@ -93,8 +100,10 @@ def admin_api_client(
         tutorial_service=TutorialService(SqlAlchemyTutorialRepository(database)),
         tutorial_draft_service=TutorialDraftService(SqlAlchemyTutorialDraftRepository(database)),
         admin_auth_service=auth_service,
-        help_request_service=HelpRequestService(
-            repository=SqlAlchemyHelpRequestRepository(database),
+        help_request_service=help_request_service,
+        help_request_evidence_service=HelpRequestEvidenceService(
+            help_request_service,
+            SqlAlchemyHelpRequestEvidenceRepository(database),
         ),
     )
     with TestClient(app) as client:
