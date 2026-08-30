@@ -57,4 +57,3 @@ def downgrade() -> None:
         table_name="help_request_results",
     )
     op.drop_table("help_request_results")
-
