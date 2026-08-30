@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Annotated, Literal, cast
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
 from pydantic import BaseModel, ConfigDict
 
 from guojing.api.dependencies import get_help_request_evidence_service, get_help_request_workflow
@@ -110,7 +110,7 @@ class HelpRequestResultResponse(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    schema_version: Literal["1.1"] = "1.1"
+    schema_version: Literal["1.2"] = "1.2"
     request_id: UUID
     client_request_id: UUID
     intent: HelpRequestIntent
@@ -169,6 +169,7 @@ class HelpRequestResponse(HelpRequestResultResponse):
 
     image_disposition: Literal["discarded_after_validation"]
     status_endpoint: str
+    access_token: str
 
     @classmethod
     def from_application(
@@ -188,6 +189,7 @@ class HelpRequestResponse(HelpRequestResultResponse):
             workflow_stage="received",
             image_disposition="discarded_after_validation",
             status_endpoint=status_endpoint,
+            access_token=value.access_token,
         )
 
 
@@ -205,6 +207,20 @@ HelpRequestWorkflowDependency = Annotated[
     HelpRequestWorkflow,
     Depends(get_help_request_workflow),
 ]
+HelpRequestAccessToken = Annotated[str | None, Header(alias="X-Help-Request-Token")]
+
+
+def _require_access(
+    request_id: UUID,
+    service: HelpRequestService,
+    access_token: HelpRequestAccessToken,
+) -> None:
+    """Avoid disclosing whether a request exists when its bearer capability is invalid."""
+    if access_token is None or not service.is_access_authorized(request_id, access_token):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="help request was not found",
+        )
 
 
 class EvidenceBoundsResponse(BaseModel):
@@ -320,10 +336,13 @@ def submit_help_request_evidence(
     evidence: HelpRequestEvidenceRequest,
     response: Response,
     service: HelpRequestEvidenceServiceDependency,
+    help_request_service: HelpRequestServiceDependency,
+    access_token: HelpRequestAccessToken = None,
 ) -> HelpRequestEvidenceResponse:
     """Accept normalized evidence only after an explicit sanitized network decision."""
     response.headers["Cache-Control"] = "no-store"
     response.headers["Pragma"] = "no-cache"
+    _require_access(request_id, help_request_service, access_token)
     try:
         envelope = service.record(request_id, evidence.to_domain(request_id))
     except (InvalidHelpRequestEvidence, ValueError) as error:
@@ -342,10 +361,13 @@ def get_latest_help_request_evidence(
     request_id: UUID,
     response: Response,
     service: HelpRequestEvidenceServiceDependency,
+    help_request_service: HelpRequestServiceDependency,
+    access_token: HelpRequestAccessToken = None,
 ) -> HelpRequestEvidenceResponse:
     """Return only the newest unexpired semantic envelope."""
     response.headers["Cache-Control"] = "no-store"
     response.headers["Pragma"] = "no-cache"
+    _require_access(request_id, help_request_service, access_token)
     envelope = service.get_latest(request_id)
     if envelope is None:
         raise HTTPException(
@@ -363,10 +385,13 @@ def get_help_request_result(
     request_id: UUID,
     response: Response,
     workflow: HelpRequestWorkflowDependency,
+    service: HelpRequestServiceDependency,
+    access_token: HelpRequestAccessToken = None,
 ) -> HelpRequestResultResponse:
     """Return status metadata without reopening or retaining the image."""
     response.headers["Cache-Control"] = "no-store"
     response.headers["Pragma"] = "no-cache"
+    _require_access(request_id, service, access_token)
     try:
         return HelpRequestResultResponse.from_workflow_state(workflow.inspect(request_id))
     except HelpRequestNotFound as error:

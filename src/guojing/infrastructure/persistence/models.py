@@ -165,6 +165,7 @@ class HelpRequestResultRecord(Base):
     request_id: Mapped[str] = mapped_column(String(36), primary_key=True)
     client_request_id: Mapped[str] = mapped_column(String(36), unique=True, nullable=False)
     request_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    access_token_digest: Mapped[str] = mapped_column(String(64), nullable=False)
     intent: Mapped[str] = mapped_column(String(40), nullable=False)
     processing_route: Mapped[str] = mapped_column(String(40), nullable=False)
     processing_status: Mapped[str] = mapped_column(String(40), nullable=False)

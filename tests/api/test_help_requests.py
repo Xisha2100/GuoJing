@@ -1,6 +1,7 @@
 """HTTP contract tests for transient screenshot help submissions."""
 
 import base64
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from typing import cast
 from uuid import UUID, uuid4
@@ -47,11 +48,15 @@ def test_accepts_a_locally_sanitized_image_and_returns_only_a_route_receipt(
     assert body["processing_status"] == "received"
     assert body["image_disposition"] == "discarded_after_validation"
     assert body["status_endpoint"] == f"/api/v1/help-requests/{body['request_id']}"
-    assert body["schema_version"] == "1.1"
+    assert body["schema_version"] == "1.2"
+    assert body["access_token"]
     assert "sanitized_image_base64" not in body
     assert response.headers["cache-control"] == "no-store"
 
-    result_response = client.get(body["status_endpoint"])
+    result_response = client.get(
+        body["status_endpoint"],
+        headers={"X-Help-Request-Token": body["access_token"]},
+    )
 
     assert result_response.status_code == 200
     assert result_response.json()["processing_status"] == "received"
@@ -79,7 +84,35 @@ def test_unknown_result_id_returns_not_found(client: TestClient) -> None:
     response = client.get(f"/api/v1/help-requests/{uuid4()}")
 
     assert response.status_code == 404
-    assert response.json()["detail"] == "help request result was not found"
+    assert response.json()["detail"] == "help request was not found"
+
+
+def test_result_and_evidence_require_the_request_capability(client: TestClient) -> None:
+    accepted = client.post("/api/v1/help-requests", json=_payload()).json()
+    request_id = accepted["request_id"]
+    bad_headers = {"X-Help-Request-Token": "not-the-issued-capability"}
+
+    result = client.get(f"/api/v1/help-requests/{request_id}", headers=bad_headers)
+    evidence = client.post(
+        f"/api/v1/help-requests/{request_id}/evidence",
+        headers=bad_headers,
+        json={
+            "schema_version": "1.0",
+            "evidence_id": str(uuid4()),
+            "package_name": "com.tencent.mm",
+            "version_name": "8.0.60",
+            "version_code": 8_060_000,
+            "source": "accessibility",
+            "sharing_policy": "sanitized_network_allowed",
+            "structure_score": 0.9,
+            "captured_at": datetime.now(UTC).isoformat(),
+            "expires_at": (datetime.now(UTC) + timedelta(minutes=1)).isoformat(),
+            "anchors": [{"anchor_id": "chat_tab", "confidence": 0.95}],
+        },
+    )
+
+    assert result.status_code == 404
+    assert evidence.status_code == 404
 
 
 def test_result_endpoint_exposes_review_and_guidance_states_without_image(
@@ -96,7 +129,11 @@ def test_result_endpoint_exposes_review_and_guidance_states_without_image(
         "包含支付确认, 需要人工复核.",
     )
 
-    review_response = client.get(f"/api/v1/help-requests/{request_id}")
+    access_token = response.json()["access_token"]
+    review_response = client.get(
+        f"/api/v1/help-requests/{request_id}",
+        headers={"X-Help-Request-Token": access_token},
+    )
 
     assert review_response.status_code == 200
     assert review_response.json()["processing_status"] == "needs_human_review"
@@ -117,7 +154,10 @@ def test_result_endpoint_exposes_review_and_guidance_states_without_image(
         ),
     )
 
-    ready_response = client.get(f"/api/v1/help-requests/{request_id}")
+    ready_response = client.get(
+        f"/api/v1/help-requests/{request_id}",
+        headers={"X-Help-Request-Token": access_token},
+    )
 
     assert ready_response.json()["processing_status"] == "guidance_ready"
     assert ready_response.json()["guidance"]["steps"][0]["requires_manual_action"] is True

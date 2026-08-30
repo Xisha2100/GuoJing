@@ -40,6 +40,7 @@ class SqlAlchemyHelpRequestRepository:
         result: HelpRequestResult,
         fingerprint: str,
         expires_at: datetime,
+        access_token_digest: str,
         now: datetime,
     ) -> HelpRequestResult:
         try:
@@ -51,8 +52,10 @@ class SqlAlchemyHelpRequestRepository:
                     )
                 )
                 if existing is not None:
-                    return _existing_or_conflict(existing, fingerprint)
-                session.add(_to_record(result, fingerprint, expires_at))
+                    existing_result = _existing_or_conflict(existing, fingerprint)
+                    existing.access_token_digest = access_token_digest
+                    return existing_result
+                session.add(_to_record(result, fingerprint, expires_at, access_token_digest))
                 session.flush()
                 _evict_if_full(session, self._max_results)
         except IntegrityError as error:
@@ -70,6 +73,17 @@ class SqlAlchemyHelpRequestRepository:
             _purge_expired(session, now)
             record = session.get(HelpRequestResultRecord, str(request_id))
             return _from_record(record) if record is not None else None
+
+    def is_access_authorized(
+        self,
+        request_id: UUID,
+        access_token_digest: str,
+        now: datetime,
+    ) -> bool:
+        with self._database.new_session() as session, session.begin():
+            _purge_expired(session, now)
+            record = session.get(HelpRequestResultRecord, str(request_id))
+            return record is not None and record.access_token_digest == access_token_digest
 
     def list(
         self,
@@ -125,11 +139,13 @@ def _to_record(
     result: HelpRequestResult,
     fingerprint: str,
     expires_at: datetime,
+    access_token_digest: str,
 ) -> HelpRequestResultRecord:
     return HelpRequestResultRecord(
         request_id=str(result.request_id),
         client_request_id=str(result.client_request_id),
         request_fingerprint=fingerprint,
+        access_token_digest=access_token_digest,
         intent=result.intent.value,
         processing_route=result.processing_route.value,
         processing_status=result.processing_status.value,

@@ -39,6 +39,7 @@ data class HelpRequestReceipt(
     val processingRoute: String,
     val processingStatus: HelpRequestProcessingStatus,
     val statusEndpoint: String,
+    val accessToken: String,
 )
 
 fun interface HelpRequestSender {
@@ -101,7 +102,7 @@ class HttpHelpRequestSender internal constructor(
         val root = json.parseToJsonElement(payload) as? JsonObject
             ?: throw HelpRequestFormatException("Help request receipt must be a JSON object")
         val schemaVersion = root.requiredString("schema_version")
-        if (schemaVersion != "1.1") {
+        if (schemaVersion != "1.2") {
             throw HelpRequestFormatException(
                 "Unsupported help request receipt schema '$schemaVersion'",
             )
@@ -136,6 +137,7 @@ class HttpHelpRequestSender internal constructor(
         if (statusEndpoint != expectedEndpoint) {
             throw HelpRequestFormatException("Help request receipt status endpoint does not match request")
         }
+        val accessToken = root.requiredString("access_token")
         HelpRequestReceipt(
             requestId = requestId,
             clientRequestId = clientRequestId,
@@ -143,6 +145,7 @@ class HttpHelpRequestSender internal constructor(
             processingRoute = route,
             processingStatus = status,
             statusEndpoint = statusEndpoint,
+            accessToken = accessToken,
         )
     } catch (error: HelpRequestFormatException) {
         throw error

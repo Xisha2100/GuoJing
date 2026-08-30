@@ -535,7 +535,7 @@ POST /api/v1/admin/help-requests/{request_id}/process
 
 ## 下一步
 
-模块 32 已提供 Android 的 Evidence Envelope 和 HTTP 发送器：仅明确允许联网的脱敏结构锚点可被序列化。接下来会为每个求助引入 capability，限制证据上传和状态读取的归属。
+模块 33 为每个求助签发短期 capability；证据上传和结果轮询必须携带它。接下来将把教程匹配结果扩展为风险和版本感知的固定执行计划。
 
 ## License
 

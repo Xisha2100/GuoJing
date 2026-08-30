@@ -116,7 +116,7 @@ class HelpRequestSenderTest {
         val RECEIPT =
             """
             {
-              "schema_version": "1.1",
+              "schema_version": "1.2",
               "request_id": "$REQUEST_ID",
               "client_request_id": "$CLIENT_REQUEST_ID",
               "intent": "recorded_tutorial",
@@ -124,6 +124,7 @@ class HelpRequestSenderTest {
               "processing_status": "received",
               "image_disposition": "discarded_after_validation",
               "status_endpoint": "/api/v1/help-requests/$REQUEST_ID",
+              "access_token": "capability-token",
               "received_at": "2026-08-26T00:00:00Z"
             }
             """.trimIndent()

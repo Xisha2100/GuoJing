@@ -62,10 +62,12 @@ def _evidence_payload(
 def test_accepts_sanitized_network_evidence_without_raw_text(client: TestClient) -> None:
     request = client.post("/api/v1/help-requests", json=_request_payload())
     request_id = request.json()["request_id"]
+    headers = {"X-Help-Request-Token": request.json()["access_token"]}
 
     response = client.post(
         f"/api/v1/help-requests/{request_id}/evidence",
         json=_evidence_payload(),
+        headers=headers,
     )
 
     assert response.status_code == 202
@@ -76,7 +78,7 @@ def test_accepts_sanitized_network_evidence_without_raw_text(client: TestClient)
     assert "ocr_text" not in body
     assert "sanitized_image_base64" not in body
 
-    latest = client.get(f"/api/v1/help-requests/{request_id}/evidence/latest")
+    latest = client.get(f"/api/v1/help-requests/{request_id}/evidence/latest", headers=headers)
     assert latest.status_code == 200
     assert latest.json()["evidence_id"] == body["evidence_id"]
 
@@ -84,10 +86,12 @@ def test_accepts_sanitized_network_evidence_without_raw_text(client: TestClient)
 def test_rejects_local_only_evidence_at_network_boundary(client: TestClient) -> None:
     request = client.post("/api/v1/help-requests", json=_request_payload())
     request_id = request.json()["request_id"]
+    headers = {"X-Help-Request-Token": request.json()["access_token"]}
 
     response = client.post(
         f"/api/v1/help-requests/{request_id}/evidence",
         json=_evidence_payload(sharing_policy="local_only"),
+        headers=headers,
     )
 
     assert response.status_code == 422
@@ -97,12 +101,14 @@ def test_rejects_local_only_evidence_at_network_boundary(client: TestClient) -> 
 def test_rejects_raw_ocr_text_as_unknown_field(client: TestClient) -> None:
     request = client.post("/api/v1/help-requests", json=_request_payload())
     request_id = request.json()["request_id"]
+    headers = {"X-Help-Request-Token": request.json()["access_token"]}
     payload = _evidence_payload()
     payload["ocr_text"] = "微信"
 
     response = client.post(
         f"/api/v1/help-requests/{request_id}/evidence",
         json=payload,
+        headers=headers,
     )
 
     assert response.status_code == 422
@@ -111,6 +117,7 @@ def test_rejects_raw_ocr_text_as_unknown_field(client: TestClient) -> None:
 def test_rejects_expired_evidence(client: TestClient) -> None:
     request = client.post("/api/v1/help-requests", json=_request_payload())
     request_id = request.json()["request_id"]
+    headers = {"X-Help-Request-Token": request.json()["access_token"]}
     captured = datetime.now(UTC) - timedelta(minutes=20)
 
     response = client.post(
@@ -119,6 +126,7 @@ def test_rejects_expired_evidence(client: TestClient) -> None:
             captured_at=captured,
             expires_at=captured + timedelta(minutes=1),
         ),
+        headers=headers,
     )
 
     assert response.status_code == 422
@@ -128,6 +136,7 @@ def test_rejects_expired_evidence(client: TestClient) -> None:
 def test_caps_client_evidence_expiry_at_the_server_ttl(client: TestClient) -> None:
     request = client.post("/api/v1/help-requests", json=_request_payload())
     request_id = request.json()["request_id"]
+    headers = {"X-Help-Request-Token": request.json()["access_token"]}
     captured = datetime.now(UTC)
 
     response = client.post(
@@ -136,6 +145,7 @@ def test_caps_client_evidence_expiry_at_the_server_ttl(client: TestClient) -> No
             captured_at=captured,
             expires_at=captured + timedelta(days=1),
         ),
+        headers=headers,
     )
 
     assert response.status_code == 202

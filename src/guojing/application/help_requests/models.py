@@ -20,5 +20,6 @@ class HelpRequestReceipt:
     intent: HelpRequestIntent
     processing_route: HelpRequestProcessingRoute
     received_at: datetime
+    access_token: str
     processing_status: HelpRequestProcessingStatus = HelpRequestProcessingStatus.RECEIVED
     image_disposition: str = "discarded_after_validation"

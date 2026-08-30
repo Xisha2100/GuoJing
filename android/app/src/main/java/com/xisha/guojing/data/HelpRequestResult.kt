@@ -74,11 +74,11 @@ data class HelpRequestResult(
 )
 
 fun interface HelpRequestStatusReader {
-    suspend fun fetch(requestId: String): HelpRequestResult
+    suspend fun fetch(requestId: String, accessToken: String): HelpRequestResult
 }
 
 object DisabledHelpRequestStatusReader : HelpRequestStatusReader {
-    override suspend fun fetch(requestId: String): HelpRequestResult =
+    override suspend fun fetch(requestId: String, accessToken: String): HelpRequestResult =
         error("Help request status querying is not configured")
 }
 
@@ -88,11 +88,15 @@ class HttpHelpRequestStatusReader internal constructor(
 ) : HelpRequestStatusReader {
     constructor(baseUrl: String) : this(HttpJsonClient(baseUrl))
 
-    override suspend fun fetch(requestId: String): HelpRequestResult {
+    override suspend fun fetch(requestId: String, accessToken: String): HelpRequestResult {
         val normalizedRequestId = requestId.trim()
         requireUuid(normalizedRequestId)
+        require(accessToken.isNotBlank())
         val result = parseResult(
-            client.get("api/v1/help-requests/$normalizedRequestId"),
+            client.get(
+                "api/v1/help-requests/$normalizedRequestId",
+                headers = mapOf("X-Help-Request-Token" to accessToken),
+            ),
             json,
         )
         if (result.requestId != normalizedRequestId) {
@@ -105,7 +109,7 @@ class HttpHelpRequestStatusReader internal constructor(
         val root = json.parseToJsonElement(payload) as? JsonObject
             ?: throw HelpRequestFormatException("Help request result must be a JSON object")
         val schemaVersion = root.requiredString("schema_version")
-        if (schemaVersion != "1.1") {
+        if (schemaVersion != "1.2") {
             throw HelpRequestFormatException(
                 "Unsupported help request result schema '$schemaVersion'",
             )

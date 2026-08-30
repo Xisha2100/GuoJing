@@ -18,18 +18,23 @@ internal class HttpJsonClient(
 ) {
     private val normalizedBaseUrl = baseUrl.trimEnd('/')
 
-    suspend fun get(path: String): String = withContext(Dispatchers.IO) {
-        execute(path, method = "GET")
+    suspend fun get(path: String, headers: Map<String, String> = emptyMap()): String = withContext(Dispatchers.IO) {
+        execute(path, method = "GET", headers = headers)
     }
 
-    suspend fun postJson(path: String, body: String): String = withContext(Dispatchers.IO) {
-        execute(path, method = "POST", requestBody = body)
+    suspend fun postJson(
+        path: String,
+        body: String,
+        headers: Map<String, String> = emptyMap(),
+    ): String = withContext(Dispatchers.IO) {
+        execute(path, method = "POST", requestBody = body, headers = headers)
     }
 
     private fun execute(
         path: String,
         method: String,
         requestBody: String? = null,
+        headers: Map<String, String> = emptyMap(),
     ): String {
         val endpoint = URL("$normalizedBaseUrl/${path.trimStart('/')}")
         val connection = connectionFactory(endpoint)
@@ -38,6 +43,7 @@ internal class HttpJsonClient(
             connection.connectTimeout = CONNECT_TIMEOUT_MILLIS
             connection.readTimeout = READ_TIMEOUT_MILLIS
             connection.setRequestProperty("Accept", "application/json")
+            headers.forEach { (name, value) -> connection.setRequestProperty(name, value) }
             if (requestBody != null) {
                 connection.doOutput = true
                 connection.setRequestProperty("Content-Type", "application/json")

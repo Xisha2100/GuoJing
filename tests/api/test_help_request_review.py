@@ -187,9 +187,11 @@ def test_tutorial_workflow_is_composed_and_checkpoint_survives_new_app(
         )
         submitted = client.post("/api/v1/help-requests", json=_payload())
         request_id = submitted.json()["request_id"]
+        request_headers = {"X-Help-Request-Token": submitted.json()["access_token"]}
         evidence = client.post(
             f"/api/v1/help-requests/{request_id}/evidence",
             json=_evidence_payload(),
+            headers=request_headers,
         )
         processed = client.post(
             f"/api/v1/admin/help-requests/{request_id}/process",
@@ -212,7 +214,10 @@ def test_tutorial_workflow_is_composed_and_checkpoint_survives_new_app(
             ),
         )
         with TestClient(restarted_app) as restarted_client:
-            polled = restarted_client.get(f"/api/v1/help-requests/{request_id}")
+            polled = restarted_client.get(
+                f"/api/v1/help-requests/{request_id}",
+                headers=request_headers,
+            )
 
     assert draft.status_code == 201
     assert published.status_code == 200

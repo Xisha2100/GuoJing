@@ -270,7 +270,10 @@ class ScreenshotHelpViewModel(
         )
         processingJob = viewModelScope.launch {
             try {
-                val result = statusReader.fetch(submitted.serverReceipt.requestId)
+                val result = statusReader.fetch(
+                    submitted.serverReceipt.requestId,
+                    submitted.serverReceipt.accessToken,
+                )
                 if (result.clientRequestId != submitted.serverReceipt.clientRequestId ||
                     result.intent != submitted.intent ||
                     result.processingRoute != submitted.serverReceipt.processingRoute

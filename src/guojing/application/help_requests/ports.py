@@ -23,12 +23,21 @@ class HelpRequestRepository(Protocol):
         result: HelpRequestResult,
         fingerprint: str,
         expires_at: datetime,
+        access_token_digest: str,
         now: datetime,
     ) -> HelpRequestResult:
         """Create a result or return the identical idempotent submission."""
 
     def get(self, request_id: UUID, now: datetime) -> HelpRequestResult | None:
         """Read one non-expired result."""
+
+    def is_access_authorized(
+        self,
+        request_id: UUID,
+        access_token_digest: str,
+        now: datetime,
+    ) -> bool:
+        """Check an expiring client capability without returning its stored digest."""
 
     def list(
         self,

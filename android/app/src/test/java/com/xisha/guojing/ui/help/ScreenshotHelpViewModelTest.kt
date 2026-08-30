@@ -448,6 +448,7 @@ class ScreenshotHelpViewModelTest {
                 processingRoute = "general_guidance",
                 processingStatus = HelpRequestProcessingStatus.RECEIVED,
                 statusEndpoint = "/api/v1/help-requests/server-request-1",
+                accessToken = "capability-token",
             )
         }
     }
@@ -467,6 +468,7 @@ class ScreenshotHelpViewModelTest {
                 processingRoute = "general_guidance",
                 processingStatus = HelpRequestProcessingStatus.RECEIVED,
                 statusEndpoint = "/api/v1/help-requests/server-request-1",
+                accessToken = "capability-token",
             )
         }
     }
@@ -477,7 +479,7 @@ class ScreenshotHelpViewModelTest {
     ) : HelpRequestStatusReader {
         var lastRequestId: String? = null
 
-        override suspend fun fetch(requestId: String): HelpRequestResult {
+        override suspend fun fetch(requestId: String, accessToken: String): HelpRequestResult {
             lastRequestId = requestId
             if (fail) error("status unavailable")
             return requireNotNull(result)

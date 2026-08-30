@@ -243,6 +243,7 @@ class ScreenshotHelpScreenTest {
                             processingRoute = "general_guidance",
                             processingStatus = HelpRequestProcessingStatus.RECEIVED,
                             statusEndpoint = "/api/v1/help-requests/server-request-1",
+                            accessToken = "capability-token",
                         ),
                     ),
                     onBack = {},

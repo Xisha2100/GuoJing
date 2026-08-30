@@ -22,7 +22,7 @@ class HelpRequestResultTest {
             },
         )
 
-        val result = reader.fetch("11111111-1111-4111-8111-111111111111")
+        val result = reader.fetch("11111111-1111-4111-8111-111111111111", "capability-token")
 
         assertEquals(
             "http://10.0.2.2:8000/api/v1/help-requests/11111111-1111-4111-8111-111111111111",
@@ -42,7 +42,7 @@ class HelpRequestResultTest {
             },
         )
 
-        val result = reader.fetch("11111111-1111-4111-8111-111111111111")
+        val result = reader.fetch("11111111-1111-4111-8111-111111111111", "capability-token")
 
         assertEquals(HelpRequestWorkflowStage.TUTORIAL_MATCHED, result.workflowStage)
         assertEquals("matched", result.tutorialMatch?.status)
@@ -60,7 +60,7 @@ class HelpRequestResultTest {
         )
 
         val error = runCatching {
-            reader.fetch("11111111-1111-4111-8111-111111111111")
+            reader.fetch("11111111-1111-4111-8111-111111111111", "capability-token")
         }.exceptionOrNull()
 
         assertTrue(error is HelpRequestFormatException)
@@ -74,7 +74,7 @@ class HelpRequestResultTest {
         )
 
         val error = runCatching {
-            reader.fetch("11111111-1111-4111-8111-111111111111")
+            reader.fetch("11111111-1111-4111-8111-111111111111", "capability-token")
         }.exceptionOrNull()
 
         assertTrue(error is HelpRequestFormatException)
@@ -93,7 +93,7 @@ class HelpRequestResultTest {
         )
 
         val error = runCatching {
-            reader.fetch("11111111-1111-4111-8111-111111111111")
+            reader.fetch("11111111-1111-4111-8111-111111111111", "capability-token")
         }.exceptionOrNull()
 
         assertTrue(error is HelpRequestFormatException)
@@ -109,7 +109,7 @@ class HelpRequestResultTest {
         )
 
         val error = runCatching {
-            reader.fetch("11111111-1111-4111-8111-111111111111")
+            reader.fetch("11111111-1111-4111-8111-111111111111", "capability-token")
         }.exceptionOrNull()
 
         assertTrue(error is HelpRequestFormatException)
@@ -125,7 +125,7 @@ class HelpRequestResultTest {
         )
 
         val error = runCatching {
-            reader.fetch("11111111-1111-4111-8111-111111111111")
+            reader.fetch("11111111-1111-4111-8111-111111111111", "capability-token")
         }.exceptionOrNull()
 
         assertTrue(error is HelpRequestFormatException)
@@ -148,14 +148,14 @@ class HelpRequestResultTest {
         )
 
         val titleError = runCatching {
-            reader.fetch("11111111-1111-4111-8111-111111111111")
+            reader.fetch("11111111-1111-4111-8111-111111111111", "capability-token")
         }.exceptionOrNull()
         val stepError = runCatching {
             HttpHelpRequestStatusReader(
                 client = HttpJsonClient("http://localhost") { _ ->
                     FakeHttpURLConnection(dangerousStepTitle)
                 },
-            ).fetch("11111111-1111-4111-8111-111111111111")
+            ).fetch("11111111-1111-4111-8111-111111111111", "capability-token")
         }.exceptionOrNull()
 
         assertTrue(titleError is HelpRequestFormatException)
@@ -166,7 +166,7 @@ class HelpRequestResultTest {
     fun status_reader_rejects_non_uuid_path_input() = runTest {
         val reader = HttpHelpRequestStatusReader("http://localhost")
 
-        val error = runCatching { reader.fetch("../../admin") }.exceptionOrNull()
+        val error = runCatching { reader.fetch("../../admin", "capability-token") }.exceptionOrNull()
 
         assertTrue(error is HelpRequestFormatException)
     }
@@ -197,7 +197,7 @@ class HelpRequestResultTest {
         val GUIDANCE_RESULT =
             """
             {
-              "schema_version": "1.1",
+              "schema_version": "1.2",
               "request_id": "11111111-1111-4111-8111-111111111111",
               "client_request_id": "22222222-2222-2222-2222-222222222222",
               "intent": "general_guidance",
@@ -223,7 +223,7 @@ class HelpRequestResultTest {
         val TUTORIAL_MATCHED_RESULT =
             """
             {
-              "schema_version": "1.1",
+              "schema_version": "1.2",
               "request_id": "11111111-1111-4111-8111-111111111111",
               "client_request_id": "22222222-2222-2222-2222-222222222222",
               "intent": "recorded_tutorial",

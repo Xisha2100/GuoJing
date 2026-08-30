@@ -18,6 +18,7 @@ import kotlinx.serialization.json.put
 /** Sanitized, retry-stable semantic evidence for one accepted help request. */
 data class HelpRequestEvidenceSubmission(
     val requestId: String,
+    val accessToken: String,
     val evidenceId: String,
     val packageName: String,
     val versionName: String,
@@ -32,6 +33,7 @@ data class HelpRequestEvidenceSubmission(
     init {
         requireUuid(requestId, "requestId")
         requireUuid(evidenceId, "evidenceId")
+        require(accessToken.isNotBlank())
         require(packageName.isNotBlank())
         require(versionName.isNotBlank())
         require(versionCode > 0)
@@ -44,6 +46,7 @@ data class HelpRequestEvidenceSubmission(
         /** Never maps local-only observations into a network request. */
         fun fromObservation(
             requestId: String,
+            accessToken: String,
             observation: ScreenObservation,
             evidenceId: String = UUID.randomUUID().toString(),
             capturedAt: Instant = Instant.now(),
@@ -53,6 +56,7 @@ data class HelpRequestEvidenceSubmission(
             }
             return HelpRequestEvidenceSubmission(
                 requestId = requestId,
+                accessToken = accessToken,
                 evidenceId = evidenceId,
                 packageName = observation.app.packageName,
                 versionName = observation.app.versionName,
@@ -159,9 +163,11 @@ class HttpHelpRequestEvidenceSender internal constructor(
         return parseResponse(
             requestId = submission.requestId,
             expectedEvidenceId = submission.evidenceId,
+            accessToken = submission.accessToken,
             payload = client.postJson(
                 "api/v1/help-requests/${submission.requestId}/evidence",
                 payload.toString(),
+                headers = mapOf("X-Help-Request-Token" to submission.accessToken),
             ),
         )
     }
@@ -182,6 +188,7 @@ class HttpHelpRequestEvidenceSender internal constructor(
     private fun parseResponse(
         requestId: String,
         expectedEvidenceId: String,
+        accessToken: String,
         payload: String,
     ): HelpRequestEvidenceSubmission = try {
         val root = json.parseToJsonElement(payload) as? JsonObject
@@ -196,6 +203,7 @@ class HttpHelpRequestEvidenceSender internal constructor(
         }
         HelpRequestEvidenceSubmission(
             requestId = responseRequestId,
+            accessToken = accessToken,
             evidenceId = responseEvidenceId,
             packageName = root.requiredString("package_name"),
             versionName = root.requiredString("version_name"),

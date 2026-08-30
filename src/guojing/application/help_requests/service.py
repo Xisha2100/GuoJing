@@ -5,6 +5,7 @@ import binascii
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
+from secrets import token_urlsafe
 from uuid import UUID, uuid4
 
 from guojing.application.help_requests.dto import HelpRequestRequest
@@ -90,6 +91,7 @@ class HelpRequestService:
                 ).encode("utf-8")
             ).hexdigest()
             now = self._clock()
+            access_token = token_urlsafe(32)
             result = HelpRequestResult(
                 request_id=uuid4(),
                 client_request_id=command.client_request_id,
@@ -104,11 +106,12 @@ class HelpRequestService:
                     result,
                     fingerprint,
                     now + self._result_ttl,
+                    sha256(access_token.encode("utf-8")).hexdigest(),
                     now,
                 )
             except ClientRequestConflictError as error:
                 raise InvalidHelpRequestPayload(str(error)) from error
-            return self._receipt(stored)
+            return self._receipt(stored, access_token)
         finally:
             image[:] = b"\x00" * len(image)
 
@@ -118,6 +121,16 @@ class HelpRequestService:
         if result is None:
             raise HelpRequestNotFound(str(request_id))
         return result
+
+    def is_access_authorized(self, request_id: UUID, access_token: str) -> bool:
+        """Check the bearer capability issued with one accepted request receipt."""
+        if not access_token or len(access_token) > 256:
+            return False
+        return self._repository.is_access_authorized(
+            request_id,
+            sha256(access_token.encode("utf-8")).hexdigest(),
+            self._clock(),
+        )
 
     def list_results(
         self,
@@ -239,13 +252,14 @@ class HelpRequestService:
         return updated
 
     @staticmethod
-    def _receipt(result: HelpRequestResult) -> HelpRequestReceipt:
+    def _receipt(result: HelpRequestResult, access_token: str) -> HelpRequestReceipt:
         return HelpRequestReceipt(
             request_id=result.request_id,
             client_request_id=result.client_request_id,
             intent=result.intent,
             processing_route=result.processing_route,
             received_at=result.received_at,
+            access_token=access_token,
             # A POST receipt describes acceptance, not the current worker result.
             # Replays therefore cannot claim guidance_ready without its payload.
             processing_status=HelpRequestProcessingStatus.RECEIVED,

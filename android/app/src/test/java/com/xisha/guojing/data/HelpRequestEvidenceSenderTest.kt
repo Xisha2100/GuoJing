@@ -29,6 +29,7 @@ class HelpRequestEvidenceSenderTest {
         )
         val submission = HelpRequestEvidenceSubmission(
             requestId = REQUEST_ID,
+            accessToken = "capability-token",
             evidenceId = EVIDENCE_ID,
             packageName = "com.tencent.mm",
             versionName = "8.0.60",
@@ -50,6 +51,7 @@ class HelpRequestEvidenceSenderTest {
         val stored = sender.send(submission)
 
         assertEquals("POST", connection.requestMethod)
+        assertEquals("capability-token", connection.getRequestProperty("X-Help-Request-Token"))
         assertTrue(connection.requestBody.contains("\"evidence_id\":\"$EVIDENCE_ID\""))
         assertTrue(connection.requestBody.contains("\"anchor_id\":\"chat_tab\""))
         assertFalse(connection.requestBody.contains("text"))
@@ -63,7 +65,11 @@ class HelpRequestEvidenceSenderTest {
         val observation = observation(ObservationSharingPolicy.LocalOnly)
 
         val error = runCatching {
-            HelpRequestEvidenceSubmission.fromObservation(REQUEST_ID, observation)
+            HelpRequestEvidenceSubmission.fromObservation(
+                requestId = REQUEST_ID,
+                accessToken = "capability-token",
+                observation = observation,
+            )
         }.exceptionOrNull()
 
         assertTrue(error is IllegalArgumentException)
@@ -73,6 +79,7 @@ class HelpRequestEvidenceSenderTest {
     fun conversion_preserves_only_structural_anchor_metadata() {
         val evidence = HelpRequestEvidenceSubmission.fromObservation(
             requestId = REQUEST_ID,
+            accessToken = "capability-token",
             observation = observation(ObservationSharingPolicy.SanitizedNetworkAllowed),
             evidenceId = EVIDENCE_ID,
             capturedAt = Instant.parse("2026-08-30T00:00:00Z"),
