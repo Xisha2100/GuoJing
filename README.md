@@ -535,7 +535,7 @@ POST /api/v1/admin/help-requests/{request_id}/process
 
 ## 下一步
 
-模块 44 提供可显式选择的相机教程草稿模板，仍须管理员验证和发布。下一步为 Android 增加教程模板的本地展示模型。
+模块 45 在 Android 侧增加教程启动守卫，固定计划不能越过本地图的版本、节点或低风险边界。
 
 ## License
 
