@@ -25,3 +25,13 @@ class ProcessingAuditEvent:
             raise ValueError("occurred_at must be timezone-aware")
         if self.attempt_number < 1:
             raise ValueError("attempt_number must be positive")
+
+    def as_log_fields(self) -> dict[str, str | int]:
+        """Return the complete permitted event projection for logs or an outbox."""
+        return {
+            "request_id": str(self.request_id),
+            "worker_id": self.worker_id,
+            "action": self.action,
+            "occurred_at": self.occurred_at.isoformat(),
+            "attempt_number": self.attempt_number,
+        }
