@@ -535,7 +535,7 @@ POST /api/v1/admin/help-requests/{request_id}/process
 
 ## 下一步
 
-模块 38 定义仅含操作元数据的后台审计事件，避免把截图或 OCR 误写入日志。下一步把 Deep Agent 限制在已批准 action catalog 内。
+模块 39 给 Deep Agent 预留最小适配端口：只收安全上下文，只返回已批准 action ID。下一步加入首个相机教程图。
 
 ## License
 
