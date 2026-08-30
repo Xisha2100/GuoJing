@@ -425,6 +425,30 @@ cd android
 
 学习文档：[docs/learning/27-production-help-workflow-entry.md](docs/learning/27-production-help-workflow-entry.md)
 
+### 28：服务端证据时间与保留边界
+
+- 服务端限制客户端证据的采集时间窗口与 TTL，响应返回实际生效的过期时间。
+- `received_at` 决定最新记录，单个求助和全局证据集合均有明确上限。
+- 重用同一个 `evidence_id` 只能得到同一提交结果，不能覆盖为不同证据。
+
+学习文档：[docs/learning/28-server-evidence-boundaries.md](docs/learning/28-server-evidence-boundaries.md)
+
+### 29：求助结果乐观并发控制
+
+- 每个求助状态携带 `state_version`；转移时 SQL 使用 `WHERE state_version = expected`。
+- 旧 worker 的陈旧写入返回冲突，而不会覆盖已确认的终态。
+- 处理器故障和状态落库冲突使用不同异常边界，冲突不会被误降级为新的状态写入。
+
+学习文档：[docs/learning/29-help-request-optimistic-concurrency.md](docs/learning/29-help-request-optimistic-concurrency.md)
+
+### 30：模型最小任务上下文与 deadline
+
+- 模型得到通用任务、人工操作安全规则和时区感知 deadline，但不会得到截图、OCR、原始问题或 Android 控制器。
+- 单次模型调用超时后立即转人工复核；未退出的调用占用唯一槽位，后续请求 fail closed。
+- 真实 Deep Agent / HTTP 适配器必须将 deadline 传入连接、读取和总超时配置。
+
+学习文档：[docs/learning/30-model-context-and-deadline.md](docs/learning/30-model-context-and-deadline.md)
+
 ### 评审修复（模块 10–20 安全收口）
 
 - 求助接口在 JSON 解析前限制请求体，并让校验错误、成功响应和状态查询统一禁止缓存且不回显截图或问题正文。
@@ -511,7 +535,7 @@ POST /api/v1/admin/help-requests/{request_id}/process
 
 ## 下一步
 
-模块 29 为每个求助状态增加了乐观并发版本：旧 worker 的写入会被拒绝，而不能覆盖新终态。接下来实现模型最小任务上下文与 deadline；模型输出仍不能直接连到 Android 操作执行。
+模块 30 为模型调用补齐最小任务上下文、deadline 和单调用隔离；超时调用会 fail closed 到人工复核。下一阶段可继续落实 transition/risk allowlist、可回收 processing lease 与 Android 端证据发送用例；模型输出仍不能直接连到 Android 操作执行。
 
 ## License
 

@@ -1,7 +1,8 @@
 """Model boundary tests: valid output publishes, everything else reviews."""
 
 from collections.abc import Mapping
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from threading import Event
 from uuid import uuid4
 
 import pytest
@@ -60,8 +61,13 @@ class StaticModel:
     def generate(
         self,
         context: ModelGuidanceContext,
+        *,
+        deadline: datetime,
     ) -> Mapping[str, object]:  # pragma: no cover - context is asserted below
         assert context.request_id
+        assert context.task
+        assert context.safety_rules
+        assert deadline == context.deadline_at
         return self.payload
 
 
@@ -132,3 +138,32 @@ def test_processor_does_not_allow_model_on_tutorial_route() -> None:
     )
 
     assert result.status is HelpRequestProcessingStatus.NEEDS_HUMAN_REVIEW
+
+
+def test_processor_times_out_and_keeps_a_blocking_model_from_accepting_more_work() -> None:
+    release = Event()
+
+    class BlockingModel:
+        def generate(
+            self,
+            _context: ModelGuidanceContext,
+            *,
+            deadline: datetime,
+        ) -> Mapping[str, object]:
+            assert deadline.tzinfo is not None
+            release.wait()
+            return _payload()
+
+    processor = SafeGuidanceModelProcessor(
+        BlockingModel(),
+        model_timeout=timedelta(milliseconds=10),
+    )
+    first = processor.process(_result())
+    second = processor.process(_result())
+    release.set()
+    processor.shutdown()
+
+    assert first.status is HelpRequestProcessingStatus.NEEDS_HUMAN_REVIEW
+    assert "超时" in (first.review_reason or "")
+    assert second.status is HelpRequestProcessingStatus.NEEDS_HUMAN_REVIEW
+    assert "上一项" in (second.review_reason or "")

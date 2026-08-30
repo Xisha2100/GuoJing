@@ -26,7 +26,7 @@
 
 ## 安全降级
 
-模型已经抛出的异常、JSON 解析失败或领域规则拒绝，都会变成统一的 `needs_human_review` 结果。当前同步端口还没有独立的调用 deadline；真实 provider 接入前必须补上连接/读取/总时限和可回收 processing lease。错误细节不直接暴露给老年用户，也不会因为重试而自动重复第三方 APP 操作。教程路由也被适配器拒绝，必须先由模块 23 完成证据和版本匹配。
+模型已经抛出的异常、JSON 解析失败或领域规则拒绝，都会变成统一的 `needs_human_review` 结果。模块 30 已补上 deadline 和单调用隔离；错误细节不直接暴露给老年用户，也不会因为重试而自动重复第三方 APP 操作。教程路由也被适配器拒绝，必须先由模块 23 完成证据和版本匹配。
 
 ## 与 LangGraph/Deep Agent 的接入点
 
@@ -34,8 +34,19 @@
 
 ```python
 class DeepAgentGuidanceModel:
-    def generate(self, context: ModelGuidanceContext) -> Mapping[str, object]:
-        raw = agent.invoke({"request_id": str(context.request_id)})
+    def generate(
+        self,
+        context: ModelGuidanceContext,
+        *,
+        deadline: datetime,
+    ) -> Mapping[str, object]:
+        raw = agent.invoke(
+            {
+                "task": context.task,
+                "safety_rules": context.safety_rules,
+            },
+            timeout=(deadline - datetime.now(UTC)).total_seconds(),
+        )
         return raw
 ```
 
@@ -55,4 +66,4 @@ class DeepAgentGuidanceModel:
 | parser + domain validation | Jackson/kotlinx serialization + Bean Validation |
 | review fallback | sealed error/result branch |
 
-模块 21–25 至此形成一条可离线测试的组件链路：持久化结果 → 受控证据 → 教程匹配 → 编排状态 → 模型候选校验。模块 27 才把确定性工作流接到生产 composition root；真正接入模型时，仍必须沿用这五层边界，并补上任务相关上下文、超时和风险 allowlist。
+模块 21–25 至此形成一条可离线测试的组件链路：持久化结果 → 受控证据 → 教程匹配 → 编排状态 → 模型候选校验。模块 27 才把确定性工作流接到生产 composition root；模块 30 进一步补齐任务上下文和超时边界。真正接入模型时，仍必须沿用这五层边界，并按实际 SDK 配置连接、读取和总时限。
