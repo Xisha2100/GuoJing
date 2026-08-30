@@ -160,6 +160,7 @@ class ScreenshotHelpScreenTest {
                     uiState = ScreenshotHelpUiState.Ready(
                         screenshot = testScreenshot(),
                         question = "这里应该点哪里？",
+                        clientRequestId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
                         receipt = ScreenshotSanitizationReceipt(
                             redactionCount = 2,
                             noSensitiveContentConfirmed = false,
@@ -191,6 +192,7 @@ class ScreenshotHelpScreenTest {
                     uiState = ScreenshotHelpUiState.Ready(
                         screenshot = testScreenshot(),
                         question = "这里应该点哪里？",
+                        clientRequestId = "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
                         receipt = ScreenshotSanitizationReceipt(
                             redactionCount = 1,
                             noSensitiveContentConfirmed = false,
@@ -237,6 +239,7 @@ class ScreenshotHelpScreenTest {
                         serverReceipt = HelpRequestReceipt(
                             requestId = "server-request-1",
                             clientRequestId = "client-request-1",
+                            intent = HelpRequestIntent.GENERAL_GUIDANCE,
                             processingRoute = "general_guidance",
                             processingStatus = HelpRequestProcessingStatus.RECEIVED,
                             statusEndpoint = "/api/v1/help-requests/server-request-1",
