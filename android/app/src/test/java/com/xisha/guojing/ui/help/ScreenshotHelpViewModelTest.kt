@@ -290,6 +290,30 @@ class ScreenshotHelpViewModelTest {
         }
 
     @Test
+    fun retry_reuses_the_same_client_request_id() =
+        runTest(mainDispatcherRule.dispatcher) {
+            val sender = RetryOnceHelpRequestSender()
+            val viewModel = ScreenshotHelpViewModel(FakeScreenshotPrivacyProcessor(), sender)
+            viewModel.importScreenshot("content://picker/42")
+            advanceUntilIdle()
+            viewModel.updateQuestion("怎么操作？")
+            viewModel.setNoSensitiveContentConfirmed(true)
+            viewModel.sanitize()
+            advanceUntilIdle()
+            viewModel.setSendConsent(true)
+
+            viewModel.send()
+            advanceUntilIdle()
+            assertTrue(viewModel.uiState.value is ScreenshotHelpUiState.Ready)
+            viewModel.send()
+            advanceUntilIdle()
+
+            assertEquals(2, sender.ids.size)
+            assertEquals(sender.ids.first(), sender.ids.last())
+            assertTrue(viewModel.uiState.value is ScreenshotHelpUiState.Submitted)
+        }
+
+    @Test
     fun submitted_request_can_refresh_processing_status_without_an_image() =
         runTest(mainDispatcherRule.dispatcher) {
             val processor = FakeScreenshotPrivacyProcessor()
@@ -420,6 +444,26 @@ class ScreenshotHelpViewModelTest {
             return HelpRequestReceipt(
                 requestId = "server-request-1",
                 clientRequestId = "client-request-1",
+                intent = HelpRequestIntent.GENERAL_GUIDANCE,
+                processingRoute = "general_guidance",
+                processingStatus = HelpRequestProcessingStatus.RECEIVED,
+                statusEndpoint = "/api/v1/help-requests/server-request-1",
+            )
+        }
+    }
+
+    private class RetryOnceHelpRequestSender : HelpRequestSender {
+        val ids = mutableListOf<String>()
+        private var attempts = 0
+
+        override suspend fun send(submission: HelpRequestSubmission): HelpRequestReceipt {
+            attempts += 1
+            ids += submission.clientRequestId
+            if (attempts == 1) error("response lost after server accepted request")
+            return HelpRequestReceipt(
+                requestId = "server-request-1",
+                clientRequestId = submission.clientRequestId,
+                intent = submission.intent,
                 processingRoute = "general_guidance",
                 processingStatus = HelpRequestProcessingStatus.RECEIVED,
                 statusEndpoint = "/api/v1/help-requests/server-request-1",

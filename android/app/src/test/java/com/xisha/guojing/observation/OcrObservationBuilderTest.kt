@@ -4,6 +4,7 @@ import com.xisha.guojing.model.PrivacyMode
 import com.xisha.guojing.testNode
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class OcrObservationBuilderTest {
@@ -109,6 +110,41 @@ class OcrObservationBuilderTest {
         )!!
 
         assertEquals(0.0, observation.anchorEvidence.single().confidence, 0.001)
+    }
+
+    @Test
+    fun one_ocr_block_cannot_satisfy_two_anchors() {
+        val node = testNode("chat_list", "微信聊天列表")
+        val baseAnchor = node.anchors.single().copy(
+            locator = node.anchors.single().locator.copy(ocrText = "微信聊天列表"),
+        )
+        val secondAnchor = baseAnchor.copy(anchorId = "same-text-again")
+        val request = request(PrivacyMode.LocalOnly).copy(anchors = listOf(baseAnchor, secondAnchor))
+
+        val observation = builder.build(
+            request,
+            observedApp(),
+            OcrStrategy.OnDevice,
+            OcrInputKind.LocalSession,
+            listOf(OcrTextBlock("微信聊天列表", 1.0, null)),
+        )!!
+
+        assertEquals(listOf(1.0, 0.0), observation.anchorEvidence.map { it.confidence })
+        assertEquals(0.5, observation.structureScore, 0.001)
+    }
+
+    @Test
+    fun short_substring_does_not_match_a_long_anchor() {
+        val observation = builder.build(
+            request(PrivacyMode.LocalOnly),
+            observedApp(),
+            OcrStrategy.OnDevice,
+            OcrInputKind.LocalSession,
+            listOf(OcrTextBlock("微信", 1.0, null)),
+        )!!
+
+        assertEquals(0.0, observation.anchorEvidence.single().confidence, 0.001)
+        assertTrue(observation.anchorEvidence.single().normalizedBounds == null)
     }
 
     @Test

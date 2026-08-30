@@ -180,6 +180,38 @@ class TutorialDetailViewModelTest {
         }
 
     @Test
+    fun changed_app_version_requires_target_evidence_before_advancing() =
+        runTest(mainDispatcherRule.dispatcher) {
+            val observationPort = FakeObservationPort()
+            val viewModel = TutorialDetailViewModel(
+                graphId = "wechat_open_family_chat",
+                repository = TutorialDetailRepository { testTutorialDetail() },
+                observationPort = observationPort,
+            )
+            advanceUntilIdle()
+            viewModel.startTutorial()
+            val sourceRequest = observationPort.lastRequest!!
+
+            observationPort.publish(matchingObservation(sourceRequest, versionCode = 2601))
+            advanceUntilIdle()
+            assertTrue(
+                currentExecution(viewModel).pageObservation is PageObservationStatus.VersionChanged,
+            )
+
+            viewModel.confirmStepCompleted()
+            val targetRequest = observationPort.lastRequest!!
+            assertEquals("conversation", targetRequest.nodeId)
+            assertTrue(currentExecution(viewModel).stage is TutorialExecutionStage.Step)
+
+            observationPort.publish(matchingObservation(targetRequest, versionCode = 2601))
+            advanceUntilIdle()
+            assertTrue(currentExecution(viewModel).stage is TutorialExecutionStage.Step)
+            observationPort.publish(matchingObservation(targetRequest, versionCode = 2601))
+            advanceUntilIdle()
+            assertTrue(currentExecution(viewModel).stage is TutorialExecutionStage.Completed)
+        }
+
+    @Test
     fun uncertain_target_never_advances_or_encourages_a_repeat() =
         runTest(mainDispatcherRule.dispatcher) {
             val observationPort = FakeObservationPort()
@@ -320,9 +352,10 @@ class TutorialDetailViewModelTest {
         bounds: NormalizedScreenBounds? = null,
         confidence: Double = 1.0,
         appPackage: String = "com.tencent.mm",
+        versionCode: Long = 2600,
     ) = ScreenObservation(
         request = request,
-        app = ObservedApp(appPackage, "8.0.60", 2600),
+        app = ObservedApp(appPackage, "8.0.60", versionCode),
         anchorEvidence = listOf(
             AnchorEvidence(request.anchors.single().anchorId, confidence, bounds),
         ),

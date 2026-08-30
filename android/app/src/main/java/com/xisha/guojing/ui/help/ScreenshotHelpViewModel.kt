@@ -27,6 +27,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import java.util.UUID
 
 class ScreenshotHelpViewModel(
     private val processor: ScreenshotPrivacyProcessor,
@@ -163,10 +164,9 @@ class ScreenshotHelpViewModel(
 
     fun setNoSensitiveContentConfirmed(confirmed: Boolean) {
         val editing = mutableUiState.value as? ScreenshotHelpUiState.Editing ?: return
-        if (confirmed && editing.privacySuggestions.any {
+        if (confirmed && (editing.redactions.isNotEmpty() || editing.privacySuggestions.any {
                 it.decision == PrivacySuggestionDecision.Pending
-            }
-        ) return
+            })) return
         mutableUiState.value = editing.copy(
             noSensitiveContentConfirmed = confirmed,
             error = null,
@@ -192,6 +192,7 @@ class ScreenshotHelpViewModel(
                 mutableUiState.value = ScreenshotHelpUiState.Ready(
                     screenshot = sanitized,
                     question = editing.question.trim(),
+                    clientRequestId = UUID.randomUUID().toString(),
                     receipt = ScreenshotSanitizationReceipt(
                         redactionCount = editing.redactions.size,
                         noSensitiveContentConfirmed = editing.noSensitiveContentConfirmed,
@@ -228,6 +229,7 @@ class ScreenshotHelpViewModel(
             screenshot = ready.screenshot,
             question = ready.question,
             receipt = ready.receipt,
+            clientRequestId = ready.clientRequestId,
             intent = ready.intent,
         )
         processingJob = viewModelScope.launch {
@@ -238,6 +240,7 @@ class ScreenshotHelpViewModel(
                         question = ready.question,
                         receipt = ready.receipt,
                         intent = ready.intent,
+                        clientRequestId = ready.clientRequestId,
                     ),
                 )
                 ensureActive()

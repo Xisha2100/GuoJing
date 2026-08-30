@@ -56,4 +56,20 @@ data class ScreenshotSanitizationReceipt(
     val redactionCount: Int,
     val noSensitiveContentConfirmed: Boolean,
     val sanitizedSha256: String,
-)
+) {
+    init {
+        require(redactionCount >= 0)
+        require(sanitizedSha256.matches(SHA256_PATTERN))
+        // These flags describe mutually exclusive privacy proofs: either the
+        // user masked one or more regions, or explicitly confirmed that none
+        // were sensitive.  Accepting both would make the receipt ambiguous.
+        require(
+            (redactionCount == 0 && noSensitiveContentConfirmed) ||
+                (redactionCount > 0 && !noSensitiveContentConfirmed),
+        )
+    }
+
+    private companion object {
+        val SHA256_PATTERN = Regex("[0-9a-fA-F]{64}")
+    }
+}

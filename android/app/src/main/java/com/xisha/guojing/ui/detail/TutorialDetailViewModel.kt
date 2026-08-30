@@ -13,12 +13,15 @@ import com.xisha.guojing.guidance.GuidanceOverlayCommand
 import com.xisha.guojing.guidance.GuidanceOverlayPort
 import com.xisha.guojing.model.TutorialGraph
 import com.xisha.guojing.model.TutorialNode
+import com.xisha.guojing.model.RiskLevel
 import com.xisha.guojing.observation.DisabledScreenObservationPort
 import com.xisha.guojing.observation.ObservationRequest
 import com.xisha.guojing.observation.ObservationSharingPolicy
 import com.xisha.guojing.observation.ObservationState
 import com.xisha.guojing.observation.ScreenMatchStatus
 import com.xisha.guojing.observation.ScreenObservationPort
+import com.xisha.guojing.observation.VersionCompatibility
+import com.xisha.guojing.observation.assessVersionCompatibility
 import com.xisha.guojing.observation.matchScreen
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -68,7 +71,12 @@ class TutorialDetailViewModel(
         val step = execution.stage as? TutorialExecutionStage.Step ?: return
         if (execution.transitionVerification != TransitionVerificationStatus.Ready) return
         val engine = executionEngine ?: return
-        if (!requirePageVerification) {
+        // A version-drift match is only a provisional low-risk trial.  Even
+        // when the UI callback uses its normal default, require the expected
+        // target page before promoting the step and moving on.
+        val mustVerifyTarget = requirePageVerification ||
+            execution.pageObservation is PageObservationStatus.VersionChanged
+        if (!mustVerifyTarget) {
             advanceStep(content, step, engine)
             return
         }
@@ -152,12 +160,17 @@ class TutorialDetailViewModel(
             return
         }
 
-        val status = observationState.toPageStatus(graph, execution.stage.node)
-        if (status is PageObservationStatus.Matched &&
+        val status = observationState.toPageStatus(
+            graph,
+            execution.stage.node,
+            step?.transition,
+        )
+        if ((status is PageObservationStatus.Matched ||
+                status is PageObservationStatus.VersionChanged) &&
             step != null &&
             observationState is ObservationState.Available
         ) {
-            showGuidance(step, observationState.observation)
+            showGuidance(step, observationState.observation, observationState.sequence)
         } else {
             overlayPort.hide()
         }
@@ -196,14 +209,68 @@ class TutorialDetailViewModel(
             is ObservationState.Available -> {
                 val result = matchScreen(content.tutorial.graph, targetNode, observationState.observation)
                 when (result.status) {
-                    ScreenMatchStatus.Matched -> onTargetMatched(
-                        content = content,
-                        execution = execution,
-                        step = step,
-                        score = result.score,
-                        localOnly = observationState.observation.sharingPolicy ==
-                            ObservationSharingPolicy.LocalOnly,
-                    )
+                    ScreenMatchStatus.Matched -> {
+                        val version = assessVersionCompatibility(
+                            targetNode,
+                            observationState.observation.app,
+                        )
+                        when (version) {
+                            VersionCompatibility.SameVerifiedVersion -> onTargetMatched(
+                                content = content,
+                                execution = execution,
+                                step = step,
+                                score = result.score,
+                                localOnly = observationState.observation.sharingPolicy ==
+                                    ObservationSharingPolicy.LocalOnly,
+                                pageObservation = PageObservationStatus.Matched(
+                                    result.score,
+                                    observationState.observation.sharingPolicy ==
+                                        ObservationSharingPolicy.LocalOnly,
+                                ),
+                            )
+                            VersionCompatibility.VersionChanged -> if (step.transition.isLowRiskTrial()) {
+                                onTargetMatched(
+                                    content = content,
+                                    execution = execution,
+                                    step = step,
+                                    score = result.score,
+                                    localOnly = observationState.observation.sharingPolicy ==
+                                        ObservationSharingPolicy.LocalOnly,
+                                    pageObservation = PageObservationStatus.VersionChanged(
+                                        result.score,
+                                        observationState.observation.sharingPolicy ==
+                                            ObservationSharingPolicy.LocalOnly,
+                                    ),
+                                )
+                            } else {
+                                consecutiveTargetMatches = 0
+                                updateTargetVerification(
+                                    content,
+                                    execution,
+                                    PageObservationStatus.VersionStale,
+                                    TransitionVerificationStatus.TargetMismatch,
+                                )
+                            }
+                            VersionCompatibility.StoredStale -> {
+                                consecutiveTargetMatches = 0
+                                updateTargetVerification(
+                                    content,
+                                    execution,
+                                    PageObservationStatus.VersionStale,
+                                    TransitionVerificationStatus.TargetMismatch,
+                                )
+                            }
+                            VersionCompatibility.UnknownCurrentVersion -> {
+                                consecutiveTargetMatches = 0
+                                updateTargetVerification(
+                                    content,
+                                    execution,
+                                    PageObservationStatus.Uncertain(result.score),
+                                    TransitionVerificationStatus.TargetUncertain,
+                                )
+                            }
+                        }
+                    }
                     ScreenMatchStatus.Uncertain -> {
                         consecutiveTargetMatches = 0
                         updateTargetVerification(
@@ -233,13 +300,14 @@ class TutorialDetailViewModel(
         step: TutorialExecutionStage.Step,
         score: Double,
         localOnly: Boolean,
+        pageObservation: PageObservationStatus = PageObservationStatus.Matched(score, localOnly),
     ) {
         consecutiveTargetMatches += 1
         if (consecutiveTargetMatches < REQUIRED_TARGET_MATCHES) {
             updateTargetVerification(
                 content,
                 execution,
-                PageObservationStatus.Matched(score, localOnly = localOnly),
+                pageObservation,
                 TransitionVerificationStatus.CheckingTarget(
                     consecutiveTargetMatches,
                     REQUIRED_TARGET_MATCHES,
@@ -268,6 +336,7 @@ class TutorialDetailViewModel(
     private fun showGuidance(
         step: TutorialExecutionStage.Step,
         observation: com.xisha.guojing.observation.ScreenObservation,
+        observationSequence: Long,
     ) {
         val targetEvidence = step.transition.targetAnchorId?.let { targetAnchorId ->
             observation.anchorEvidence.firstOrNull { evidence ->
@@ -280,6 +349,9 @@ class TutorialDetailViewModel(
                 stepNumber = step.stepNumber,
                 instruction = step.transition.instruction,
                 targetBounds = targetEvidence?.normalizedBounds,
+                graphId = observation.request.graphId,
+                nodeId = observation.request.nodeId,
+                observationSequence = observationSequence,
             ),
         )
     }
@@ -321,6 +393,7 @@ class TutorialDetailViewModel(
     private fun ObservationState.toPageStatus(
         graph: TutorialGraph,
         node: TutorialNode,
+        transition: com.xisha.guojing.model.TutorialTransition? = null,
     ): PageObservationStatus = when (this) {
         ObservationState.Idle -> PageObservationStatus.NotStarted
         is ObservationState.CapturePaused -> PageObservationStatus.CapturePaused
@@ -331,17 +404,36 @@ class TutorialDetailViewModel(
             } else {
                 val result = matchScreen(graph, node, observation)
                 when (result.status) {
-                    ScreenMatchStatus.Matched -> PageObservationStatus.Matched(
-                        score = result.score,
-                        localOnly = observation.sharingPolicy ==
-                            ObservationSharingPolicy.LocalOnly,
-                    )
+                    ScreenMatchStatus.Matched -> when (
+                        assessVersionCompatibility(node, observation.app)
+                    ) {
+                        VersionCompatibility.SameVerifiedVersion -> PageObservationStatus.Matched(
+                            score = result.score,
+                            localOnly = observation.sharingPolicy ==
+                                ObservationSharingPolicy.LocalOnly,
+                        )
+                        VersionCompatibility.VersionChanged -> if (transition?.isLowRiskTrial() == true) {
+                            PageObservationStatus.VersionChanged(
+                                score = result.score,
+                                localOnly = observation.sharingPolicy ==
+                                    ObservationSharingPolicy.LocalOnly,
+                            )
+                        } else {
+                            PageObservationStatus.VersionStale
+                        }
+                        VersionCompatibility.StoredStale -> PageObservationStatus.VersionStale
+                        VersionCompatibility.UnknownCurrentVersion ->
+                            PageObservationStatus.Uncertain(result.score)
+                    }
                     ScreenMatchStatus.Uncertain -> PageObservationStatus.Uncertain(result.score)
                     ScreenMatchStatus.Mismatch -> PageObservationStatus.Mismatch
                 }
             }
         }
     }
+
+    private fun com.xisha.guojing.model.TutorialTransition.isLowRiskTrial(): Boolean =
+        riskLevel != RiskLevel.Financial && riskLevel != RiskLevel.Irreversible
 
     private fun ObservationState.requestOrNull(): ObservationRequest? = when (this) {
         ObservationState.Idle -> null

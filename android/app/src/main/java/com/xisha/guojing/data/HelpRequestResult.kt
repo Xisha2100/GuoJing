@@ -111,11 +111,20 @@ class HttpHelpRequestStatusReader internal constructor(
                 "a review reason is only allowed during human review",
             )
         }
+        val intent = HelpRequestIntent.fromWire(root.requiredString("intent"))
+        val processingRoute = root.requiredString("processing_route")
+        val expectedRoute = when (intent) {
+            HelpRequestIntent.RECORDED_TUTORIAL -> "tutorial_match"
+            HelpRequestIntent.GENERAL_GUIDANCE -> "general_guidance"
+        }
+        if (processingRoute != expectedRoute) {
+            throw HelpRequestFormatException("Help request result route does not match intent")
+        }
         return HelpRequestResult(
             requestId = root.requiredUuidString("request_id"),
             clientRequestId = root.requiredUuidString("client_request_id"),
-            intent = HelpRequestIntent.fromWire(root.requiredString("intent")),
-            processingRoute = root.requiredString("processing_route"),
+            intent = intent,
+            processingRoute = processingRoute,
             processingStatus = processingStatus,
             receivedAt = root.requiredString("received_at"),
             updatedAt = root.requiredString("updated_at"),
@@ -139,7 +148,7 @@ class HttpHelpRequestStatusReader internal constructor(
             throw HelpRequestFormatException("Help request guidance must contain 1 to 20 steps")
         }
         return HelpRequestGuidance(
-            title = guidance.requiredString("title"),
+            title = guidance.requiredSafeText("title"),
             steps = steps.mapIndexed { index, stepValue ->
                 val step = stepValue as? JsonObject
                     ?: throw HelpRequestFormatException(
@@ -152,7 +161,7 @@ class HttpHelpRequestStatusReader internal constructor(
                 }
                 HelpRequestGuidanceStep(
                     stepId = step.requiredString("step_id"),
-                    title = step.requiredString("title"),
+                    title = step.requiredSafeText("title"),
                     instruction = step.requiredSafeInstruction(),
                 )
             },
@@ -181,10 +190,23 @@ class HttpHelpRequestStatusReader internal constructor(
 
     private fun JsonObject.requiredSafeInstruction(): String {
         val value = requiredString("instruction")
-        if (UNSAFE_GUIDANCE_PATTERN.containsMatchIn(value)) {
+        requireSafeGuidanceText(value)
+        return value
+    }
+
+    private fun JsonObject.requiredSafeText(name: String): String {
+        val value = requiredString(name)
+        requireSafeGuidanceText(value)
+        return value
+    }
+
+    private fun requireSafeGuidanceText(value: String) {
+        val normalized = value
+            .lowercase()
+            .filter { it.isLetterOrDigit() }
+        if (UNSAFE_GUIDANCE_TERMS.any(normalized::contains)) {
             throw HelpRequestFormatException("Help request guidance contains a blocked operation")
         }
-        return value
     }
 
     private fun requireUuid(value: String) {
@@ -196,7 +218,34 @@ class HttpHelpRequestStatusReader internal constructor(
     }
 
     private companion object {
-        val UNSAFE_GUIDANCE_PATTERN =
-            Regex("转账|付款|支付|发红包|删除账号|注销账号|输入密码|输入验证码|确认购买|立即下单")
+        val UNSAFE_GUIDANCE_TERMS = listOf(
+            "转账",
+            "汇款",
+            "收款",
+            "提现",
+            "充值",
+            "付款",
+            "支付",
+            "支付密码",
+            "发送金额",
+            "发红包",
+            "删除账号",
+            "删除账户",
+            "确认删除",
+            "注销账号",
+            "注销账户",
+            "输入密码",
+            "输入支付密码",
+            "填写密码",
+            "填写支付密码",
+            "键入密码",
+            "键入支付密码",
+            "输入验证码",
+            "填写验证码",
+            "确认购买",
+            "立即下单",
+            "确认下单",
+            "购买",
+        )
     }
 }

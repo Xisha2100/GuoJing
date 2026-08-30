@@ -416,6 +416,15 @@ cd android
 
 学习文档：[docs/learning/25-model-adapter-safety.md](docs/learning/25-model-adapter-safety.md)
 
+### 评审修复（模块 10–20 安全收口）
+
+- 求助接口在 JSON 解析前限制请求体，并让校验错误、成功响应和状态查询统一禁止缓存且不回显截图或问题正文。
+- 处理器异常安全转人工复核；重复提交固定返回接收收据；人工复核先记录可重放的 `*_requested` 审计意图。
+- Android 发送重试复用同一 `client_request_id`，严格关联收据的客户端 ID、意图、路由、状态和状态地址。
+- 浮层绑定 observation 序列，版本漂移仅允许低风险试运行并强制目标页确认；OCR block 一对一分配；隐私收据和危险指引字段增加最终不变量校验。
+
+学习文档：[docs/learning/26-review-remediation.md](docs/learning/26-review-remediation.md)
+
 ## 教程 API
 
 管理端先登录；成功响应会设置会话 Cookie 和 CSRF Cookie：
@@ -482,7 +491,7 @@ GET /api/v1/tutorials/{graph_id}
 
 ## 下一步
 
-模块 21–25 已完成。下一阶段建议先做一次端到端联调和产品验收，再决定具体模型供应商、真实 Agent SDK 与部署环境；在此之前不应把模型输出直接连到 Android 操作执行。
+模块 21–25 及中期 review 修复已完成。下一阶段建议先做一次端到端联调和产品验收，再决定具体模型供应商、真实 Agent SDK 与部署环境；在此之前不应把模型输出直接连到 Android 操作执行。
 
 ## License
 

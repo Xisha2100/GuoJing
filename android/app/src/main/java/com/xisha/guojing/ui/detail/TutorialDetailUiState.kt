@@ -52,6 +52,13 @@ sealed interface PageObservationStatus {
         val localOnly: Boolean,
     ) : PageObservationStatus
 
+    data class VersionChanged(
+        val score: Double,
+        val localOnly: Boolean,
+    ) : PageObservationStatus
+
+    data object VersionStale : PageObservationStatus
+
     data class Uncertain(
         val score: Double,
     ) : PageObservationStatus

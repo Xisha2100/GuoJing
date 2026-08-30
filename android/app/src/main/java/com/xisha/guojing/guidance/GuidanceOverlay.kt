@@ -10,6 +10,10 @@ data class GuidanceOverlayCommand(
     val stepNumber: Int,
     val instruction: String,
     val targetBounds: NormalizedScreenBounds?,
+    /** Identity of the observation that justified this visible command. */
+    val graphId: String = "",
+    val nodeId: String = "",
+    val observationSequence: Long = 0L,
 )
 
 sealed interface GuidanceOverlayState {

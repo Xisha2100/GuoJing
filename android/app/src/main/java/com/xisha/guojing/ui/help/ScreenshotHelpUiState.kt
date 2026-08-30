@@ -32,7 +32,8 @@ sealed interface ScreenshotHelpUiState {
                 privacySuggestions.none {
                     it.decision == PrivacySuggestionDecision.Pending
                 } &&
-                (redactions.isNotEmpty() || noSensitiveContentConfirmed)
+                ((redactions.isNotEmpty() && !noSensitiveContentConfirmed) ||
+                    (redactions.isEmpty() && noSensitiveContentConfirmed))
     }
 
     data class Sanitizing(
@@ -46,6 +47,7 @@ sealed interface ScreenshotHelpUiState {
         val screenshot: InMemoryScreenshot,
         val question: String,
         val receipt: ScreenshotSanitizationReceipt,
+        val clientRequestId: String,
         val intent: HelpRequestIntent = HelpRequestIntent.GENERAL_GUIDANCE,
         val sendConsent: Boolean = false,
         val error: ScreenshotHelpError? = null,
@@ -58,6 +60,7 @@ sealed interface ScreenshotHelpUiState {
         val screenshot: InMemoryScreenshot,
         val question: String,
         val receipt: ScreenshotSanitizationReceipt,
+        val clientRequestId: String,
         val intent: HelpRequestIntent,
     ) : ScreenshotHelpUiState
 

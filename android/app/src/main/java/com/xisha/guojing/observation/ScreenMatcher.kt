@@ -3,6 +3,7 @@ package com.xisha.guojing.observation
 import com.xisha.guojing.model.AnchorRole
 import com.xisha.guojing.model.TutorialGraph
 import com.xisha.guojing.model.TutorialNode
+import com.xisha.guojing.model.VerificationStatus
 
 enum class ScreenMatchStatus {
     Matched,
@@ -16,6 +17,27 @@ enum class ScreenMatchReason {
     ForbiddenAnchorPresent,
     RequiredAnchorMissing,
     ScoreBelowThreshold,
+}
+
+/** Compatibility gate kept separate from visual score calculation. */
+enum class VersionCompatibility {
+    SameVerifiedVersion,
+    VersionChanged,
+    StoredStale,
+    UnknownCurrentVersion,
+}
+
+fun assessVersionCompatibility(
+    node: TutorialNode,
+    observedApp: ObservedApp,
+): VersionCompatibility = when {
+    node.verificationStatus == VerificationStatus.Stale ->
+        VersionCompatibility.StoredStale
+    observedApp.versionCode <= 0L -> VersionCompatibility.UnknownCurrentVersion
+    node.verificationStatus == VerificationStatus.Verified &&
+        node.lastVerifiedVersionCode?.toLong() == observedApp.versionCode ->
+        VersionCompatibility.SameVerifiedVersion
+    else -> VersionCompatibility.VersionChanged
 }
 
 data class ScreenMatchResult(

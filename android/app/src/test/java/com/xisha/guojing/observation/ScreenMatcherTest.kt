@@ -1,6 +1,7 @@
 package com.xisha.guojing.observation
 
 import com.xisha.guojing.model.AnchorRole
+import com.xisha.guojing.model.VerificationStatus
 import com.xisha.guojing.testTutorialDetail
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -63,6 +64,29 @@ class ScreenMatcherTest {
 
         assertEquals(ScreenMatchStatus.Mismatch, result.status)
         assertEquals(ScreenMatchReason.PackageMismatch, result.reason)
+    }
+
+    @Test
+    fun version_compatibility_requires_the_same_verified_version() {
+        assertEquals(
+            VersionCompatibility.SameVerifiedVersion,
+            assessVersionCompatibility(node, ObservedApp("com.tencent.mm", "8.0.60", 2600)),
+        )
+        assertEquals(
+            VersionCompatibility.VersionChanged,
+            assessVersionCompatibility(node, ObservedApp("com.tencent.mm", "8.0.61", 2601)),
+        )
+        assertEquals(
+            VersionCompatibility.StoredStale,
+            assessVersionCompatibility(
+                node.copy(verificationStatus = VerificationStatus.Stale),
+                ObservedApp("com.tencent.mm", "8.0.60", 2600),
+            ),
+        )
+        assertEquals(
+            VersionCompatibility.UnknownCurrentVersion,
+            assessVersionCompatibility(node, ObservedApp("com.tencent.mm", "", 0)),
+        )
     }
 
     private fun observation(confidence: Double, structure: Double): ScreenObservation {

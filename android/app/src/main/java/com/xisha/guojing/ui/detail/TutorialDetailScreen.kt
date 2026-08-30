@@ -335,6 +335,10 @@ private fun PageObservationNotice(
             val privacy = if (status.localOnly) "证据只保留在本机。" else "只生成脱敏后的锚点证据。"
             "当前页面匹配" to "已找到教程需要的页面控件。$privacy"
         }
+        status is PageObservationStatus.VersionChanged ->
+            "APP 版本有变化" to "页面看起来匹配，但教程是在其他版本确认的。仅允许低风险步骤试运行，并等待下一页再次确认。"
+        status == PageObservationStatus.VersionStale ->
+            "教程版本已过期" to "这个教程节点已标记为过期，老牌子不会继续显示引导。"
         status is PageObservationStatus.Uncertain ->
             "暂时无法确认页面" to "页面控件不够完整，请检查是否打开了正确页面。"
         status == PageObservationStatus.Mismatch ->

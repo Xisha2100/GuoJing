@@ -28,11 +28,14 @@ data class HelpRequestSubmission(
     val question: String,
     val receipt: ScreenshotSanitizationReceipt,
     val intent: HelpRequestIntent,
+    /** Stable across transport retries for one user-confirmed submission. */
+    val clientRequestId: String = UUID.randomUUID().toString(),
 )
 
 data class HelpRequestReceipt(
     val requestId: String,
     val clientRequestId: String,
+    val intent: HelpRequestIntent,
     val processingRoute: String,
     val processingStatus: HelpRequestProcessingStatus,
     val statusEndpoint: String,
@@ -59,7 +62,8 @@ class HttpHelpRequestSender internal constructor(
     constructor(baseUrl: String) : this(HttpJsonClient(baseUrl))
 
     override suspend fun send(submission: HelpRequestSubmission): HelpRequestReceipt {
-        val clientRequestId = UUID.randomUUID().toString()
+        val clientRequestId = submission.clientRequestId.trim()
+        requireUuid(clientRequestId, "client_request_id")
         val body = buildJsonObject {
             put("schema_version", "1.0")
             put("client_request_id", clientRequestId)
@@ -80,10 +84,20 @@ class HttpHelpRequestSender internal constructor(
                 Base64.getEncoder().encodeToString(submission.screenshot.encodedBytes),
             )
         }
-        return parseReceipt(client.postJson("api/v1/help-requests", body.toString()), json)
+        return parseReceipt(
+            payload = client.postJson("api/v1/help-requests", body.toString()),
+            json = json,
+            expectedClientRequestId = clientRequestId,
+            expectedIntent = submission.intent,
+        )
     }
 
-    private fun parseReceipt(payload: String, json: Json): HelpRequestReceipt = try {
+    private fun parseReceipt(
+        payload: String,
+        json: Json,
+        expectedClientRequestId: String,
+        expectedIntent: HelpRequestIntent,
+    ): HelpRequestReceipt = try {
         val root = json.parseToJsonElement(payload) as? JsonObject
             ?: throw HelpRequestFormatException("Help request receipt must be a JSON object")
         val schemaVersion = root.requiredString("schema_version")
@@ -92,14 +106,43 @@ class HttpHelpRequestSender internal constructor(
                 "Unsupported help request receipt schema '$schemaVersion'",
             )
         }
+        val requestId = root.requiredString("request_id")
+        requireUuid(requestId, "request_id")
+        val clientRequestId = root.requiredString("client_request_id")
+        requireUuid(clientRequestId, "client_request_id")
+        if (UUID.fromString(clientRequestId) != UUID.fromString(expectedClientRequestId)) {
+            throw HelpRequestFormatException("Help request receipt client id does not match submission")
+        }
+        val intent = HelpRequestIntent.fromWire(root.requiredString("intent"))
+        if (intent != expectedIntent) {
+            throw HelpRequestFormatException("Help request receipt intent does not match submission")
+        }
+        val route = root.requiredString("processing_route")
+        val expectedRoute = when (intent) {
+            HelpRequestIntent.RECORDED_TUTORIAL -> "tutorial_match"
+            HelpRequestIntent.GENERAL_GUIDANCE -> "general_guidance"
+        }
+        if (route != expectedRoute) {
+            throw HelpRequestFormatException("Help request receipt route does not match intent")
+        }
+        val status = HelpRequestProcessingStatus.fromWire(
+            root.requiredString("processing_status"),
+        )
+        if (status != HelpRequestProcessingStatus.RECEIVED) {
+            throw HelpRequestFormatException("Help request submission receipt must be received")
+        }
+        val statusEndpoint = root.requiredString("status_endpoint")
+        val expectedEndpoint = "/api/v1/help-requests/$requestId"
+        if (statusEndpoint != expectedEndpoint) {
+            throw HelpRequestFormatException("Help request receipt status endpoint does not match request")
+        }
         HelpRequestReceipt(
-            requestId = root.requiredString("request_id"),
-            clientRequestId = root.requiredString("client_request_id"),
-            processingRoute = root.requiredString("processing_route"),
-            processingStatus = HelpRequestProcessingStatus.fromWire(
-                root.requiredString("processing_status"),
-            ),
-            statusEndpoint = root.requiredString("status_endpoint"),
+            requestId = requestId,
+            clientRequestId = clientRequestId,
+            intent = intent,
+            processingRoute = route,
+            processingStatus = status,
+            statusEndpoint = statusEndpoint,
         )
     } catch (error: HelpRequestFormatException) {
         throw error
@@ -113,5 +156,13 @@ class HttpHelpRequestSender internal constructor(
             throw HelpRequestFormatException("Help request receipt has no non-empty '$name'")
         }
         return value
+    }
+
+    private fun requireUuid(value: String, field: String) {
+        try {
+            UUID.fromString(value)
+        } catch (error: IllegalArgumentException) {
+            throw HelpRequestFormatException("Help request '$field' is not a UUID", error)
+        }
     }
 }

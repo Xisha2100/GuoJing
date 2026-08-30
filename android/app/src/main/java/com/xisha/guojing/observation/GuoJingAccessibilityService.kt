@@ -24,10 +24,19 @@ class GuoJingAccessibilityService : AccessibilityService() {
     private var overlayController: AccessibilityGuidanceOverlayController? = null
 
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
-        val request = AccessibilityObservationCoordinator.activeRequest() ?: return
+        val request = AccessibilityObservationCoordinator.activeRequest() ?: run {
+            overlayController?.temporarilyHide()
+            return
+        }
         // This check happens before rootInActiveWindow: capture-paused means no tree access.
-        if (request.privacyMode == com.xisha.guojing.model.PrivacyMode.CapturePaused) return
-        val packageName = event.packageName?.toString() ?: return
+        if (request.privacyMode == com.xisha.guojing.model.PrivacyMode.CapturePaused) {
+            overlayController?.temporarilyHide()
+            return
+        }
+        val packageName = event.packageName?.toString() ?: run {
+            overlayController?.temporarilyHide()
+            return
+        }
         if (packageName != request.targetPackageName) {
             overlayController?.temporarilyHide()
             return
@@ -36,6 +45,7 @@ class GuoJingAccessibilityService : AccessibilityService() {
         val root = rootInActiveWindow
         if (root == null) {
             debug("target event has no active root")
+            overlayController?.temporarilyHide()
             return
         }
         // Events can arrive after a fast app switch; verify the live root independently.
@@ -48,7 +58,10 @@ class GuoJingAccessibilityService : AccessibilityService() {
             request = request,
             app = readObservedApp(packageName),
             nodes = readSemanticNodes(root),
-        ) ?: return
+        ) ?: run {
+            overlayController?.temporarilyHide()
+            return
+        }
         debug(
             "observed package=$packageName node=${request.nodeId} evidence=" +
                 observation.anchorEvidence.joinToString { evidence ->
@@ -63,14 +76,17 @@ class GuoJingAccessibilityService : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         overlayController = AccessibilityGuidanceOverlayController(this)
+        // The service can be recreated while the process-level coordinator
+        // still contains the previous command.  Require a fresh observation
+        // after reconnect instead of restoring that command by package name.
+        overlayController?.hide()
+        AccessibilityGuidanceCoordinator.hide()
         serviceScope.launch {
             AccessibilityGuidanceCoordinator.state.collect { state ->
                 when (state) {
                     GuidanceOverlayState.Hidden -> overlayController?.hide()
                     is GuidanceOverlayState.Visible -> {
-                        if (rootInActiveWindow?.packageName?.toString() ==
-                            state.command.targetPackageName
-                        ) {
+                        if (isCurrentVisibleCommand(state)) {
                             overlayController?.show(state.command)
                         } else {
                             overlayController?.temporarilyHide()
@@ -83,6 +99,19 @@ class GuoJingAccessibilityService : AccessibilityService() {
         AccessibilityObservationCoordinator.activeRequest()?.let(
             AccessibilityObservationCoordinator::observe,
         )
+    }
+
+    private fun isCurrentVisibleCommand(state: GuidanceOverlayState.Visible): Boolean {
+        val observationState = AccessibilityObservationCoordinator.state.value
+        val available = observationState as? ObservationState.Available ?: return false
+        val command = state.command
+        val observation = available.observation
+        return command.observationSequence > 0L &&
+            available.sequence == command.observationSequence &&
+            observation.request.graphId == command.graphId &&
+            observation.request.nodeId == command.nodeId &&
+            observation.app.packageName == command.targetPackageName &&
+            rootInActiveWindow?.packageName?.toString() == command.targetPackageName
     }
 
     override fun onDestroy() {

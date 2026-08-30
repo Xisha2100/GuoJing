@@ -52,8 +52,18 @@ class OcrObservationBuilder {
             return null
         }
 
+        // Allocate each OCR block at most once.  Without this, a short common
+        // word could satisfy several anchors independently and inflate the
+        // screen score beyond what the pixels actually support.
+        val remainingBlocks = blocks.toMutableList()
         val evidence = request.anchors.map { anchor ->
-            bestEvidence(anchor, blocks)
+            val match = bestEvidence(anchor, remainingBlocks)
+            if (match != null) {
+                remainingBlocks.removeAt(match.blockIndex)
+                match.evidence
+            } else {
+                AnchorEvidence(anchorId = anchor.anchorId, confidence = 0.0, normalizedBounds = null)
+            }
         }
         val structuralAnchorIds = request.anchors
             .filter { it.role == AnchorRole.Required }
@@ -86,23 +96,25 @@ class OcrObservationBuilder {
     private fun bestEvidence(
         anchor: ScreenAnchor,
         blocks: List<OcrTextBlock>,
-    ): AnchorEvidence {
+    ): BlockMatch? {
         val expected = anchor.locator.ocrText?.let(::normalize)
-        if (expected == null) {
-            return AnchorEvidence(anchorId = anchor.anchorId, confidence = 0.0, normalizedBounds = null)
-        }
-        val best = blocks
-            .maxByOrNull { block -> matchConfidence(expected, normalize(block.text), block.confidence) }
-            ?.takeIf { block -> matchConfidence(expected, normalize(block.text), block.confidence) > 0.0 }
-        val confidence = best?.let {
-            matchConfidence(expected, normalize(it.text), it.confidence)
-        } ?: 0.0
-        return AnchorEvidence(
+        if (expected == null || expected.isBlank()) return null
+        val best = blocks.mapIndexed { index, block ->
+            index to matchConfidence(expected, normalize(block.text), block.confidence)
+        }.maxByOrNull { (_, confidence) -> confidence }
+            ?.takeIf { (_, confidence) -> confidence > 0.0 }
+            ?: return null
+        val (blockIndex, confidence) = best
+        val block = blocks[blockIndex]
+        return BlockMatch(
+            blockIndex = blockIndex,
+            evidence = AnchorEvidence(
             anchorId = anchor.anchorId,
             confidence = confidence,
-            normalizedBounds = best?.normalizedBounds?.takeIf {
+            normalizedBounds = block.normalizedBounds.takeIf {
                 confidence >= ANCHOR_PRESENCE_THRESHOLD
             },
+            ),
         )
     }
 
@@ -111,6 +123,9 @@ class OcrObservationBuilder {
         val textMatch = when {
             expected == actual -> 1.0
             expected.length >= MINIMUM_SUBSTRING_LENGTH &&
+                actual.length >= MINIMUM_SUBSTRING_LENGTH &&
+                min(expected.length, actual.length).toDouble() /
+                    maxOf(expected.length, actual.length) >= MINIMUM_COVERAGE &&
                 (actual.contains(expected) || expected.contains(actual)) -> SUBSTRING_MATCH
             else -> 0.0
         }
@@ -122,10 +137,16 @@ class OcrObservationBuilder {
         .lowercase()
         .filter { it.isLetterOrDigit() }
 
+    private data class BlockMatch(
+        val blockIndex: Int,
+        val evidence: AnchorEvidence,
+    )
+
     private companion object {
         const val ANCHOR_PRESENCE_THRESHOLD = 0.80
         const val MINIMUM_SUBSTRING_LENGTH = 2
-        const val SUBSTRING_MATCH = 0.90
+        const val MINIMUM_COVERAGE = 0.80
+        const val SUBSTRING_MATCH = 0.75
     }
 }
 

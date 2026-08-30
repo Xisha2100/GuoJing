@@ -100,6 +100,37 @@ class HelpRequestResultTest {
     }
 
     @Test
+    fun status_reader_rejects_dangerous_guidance_title_and_step_title() = runTest {
+        val dangerousTitle = GUIDANCE_RESULT.replace(
+            "\"title\": \"基础指引\"",
+            "\"title\": \"请 点 击 支 付\"",
+        )
+        val dangerousStepTitle = GUIDANCE_RESULT.replace(
+            "\"title\": \"先看标题\"",
+            "\"title\": \"确认购买\"",
+        )
+        val reader = HttpHelpRequestStatusReader(
+            client = HttpJsonClient("http://localhost") { _ ->
+                FakeHttpURLConnection(dangerousTitle)
+            },
+        )
+
+        val titleError = runCatching {
+            reader.fetch("11111111-1111-4111-8111-111111111111")
+        }.exceptionOrNull()
+        val stepError = runCatching {
+            HttpHelpRequestStatusReader(
+                client = HttpJsonClient("http://localhost") { _ ->
+                    FakeHttpURLConnection(dangerousStepTitle)
+                },
+            ).fetch("11111111-1111-4111-8111-111111111111")
+        }.exceptionOrNull()
+
+        assertTrue(titleError is HelpRequestFormatException)
+        assertTrue(stepError is HelpRequestFormatException)
+    }
+
+    @Test
     fun status_reader_rejects_non_uuid_path_input() = runTest {
         val reader = HttpHelpRequestStatusReader("http://localhost")
 
