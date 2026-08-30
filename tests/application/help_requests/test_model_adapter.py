@@ -8,6 +8,7 @@ from uuid import uuid4
 import pytest
 
 from guojing.application.help_requests.model_adapter import (
+    ApprovedActionReferenceParser,
     ModelGuidanceContext,
     ModelOutputValidationError,
     SafeGuidanceModelProcessor,
@@ -33,6 +34,10 @@ def _payload() -> dict[str, object]:
             },
         ],
     }
+
+
+def _action_payload(*action_ids: str) -> dict[str, object]:
+    return {"action_ids": list(action_ids)}
 
 
 def _result(
@@ -118,24 +123,36 @@ def test_parser_rejects_irreversible_instruction() -> None:
         StructuredGuidanceParser().parse(payload)
 
 
+def test_action_reference_parser_rejects_free_text_and_duplicate_ids() -> None:
+    with pytest.raises(ModelOutputValidationError, match="only action_ids"):
+        ApprovedActionReferenceParser().parse(_payload())
+    with pytest.raises(ModelOutputValidationError, match="unique"):
+        ApprovedActionReferenceParser().parse(
+            _action_payload("general.observe_page", "general.observe_page"),
+        )
+
+
 def test_processor_publishes_valid_model_output() -> None:
-    result = SafeGuidanceModelProcessor(StaticModel(_payload())).process(_result())
+    result = SafeGuidanceModelProcessor(
+        StaticModel(_action_payload("general.observe_page")),
+    ).process(_result())
 
     assert result.status is HelpRequestProcessingStatus.GUIDANCE_READY
     assert result.guidance is not None
 
 
 def test_processor_converts_model_failure_to_review() -> None:
-    result = SafeGuidanceModelProcessor(StaticModel({"unexpected": True})).process(_result())
+    result = SafeGuidanceModelProcessor(
+        StaticModel(_action_payload("payment.send_money")),
+    ).process(_result())
 
     assert result.status is HelpRequestProcessingStatus.NEEDS_HUMAN_REVIEW
     assert result.review_reason is not None
 
 
 def test_processor_does_not_allow_model_on_tutorial_route() -> None:
-    result = SafeGuidanceModelProcessor(StaticModel(_payload())).process(
-        _result(HelpRequestProcessingRoute.TUTORIAL_MATCH),
-    )
+    processor = SafeGuidanceModelProcessor(StaticModel(_action_payload("general.observe_page")))
+    result = processor.process(_result(HelpRequestProcessingRoute.TUTORIAL_MATCH))
 
     assert result.status is HelpRequestProcessingStatus.NEEDS_HUMAN_REVIEW
 
@@ -152,7 +169,7 @@ def test_processor_times_out_and_keeps_a_blocking_model_from_accepting_more_work
         ) -> Mapping[str, object]:
             assert deadline.tzinfo is not None
             release.wait()
-            return _payload()
+            return _action_payload("general.observe_page")
 
     processor = SafeGuidanceModelProcessor(
         BlockingModel(),

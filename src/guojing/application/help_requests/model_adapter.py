@@ -8,6 +8,11 @@ from threading import BoundedSemaphore
 from typing import Final, Protocol
 from uuid import UUID
 
+from guojing.application.help_requests.guidance_actions import (
+    GuidanceActionCatalog,
+    UnknownGuidanceAction,
+    default_guidance_action_catalog,
+)
 from guojing.application.help_requests.processor import HelpRequestProcessorOutcome
 from guojing.domain.help_requests import (
     HelpRequestGuidance,
@@ -20,6 +25,7 @@ from guojing.domain.help_requests import (
 
 MAX_MODEL_OUTPUT_KEYS = frozenset({"title", "steps"})
 MAX_MODEL_STEP_KEYS = frozenset({"step_id", "title", "instruction", "requires_manual_action"})
+MAX_MODEL_ACTION_OUTPUT_KEYS = frozenset({"action_ids"})
 DEFAULT_MODEL_TIMEOUT: Final = timedelta(seconds=10)
 GENERAL_GUIDANCE_TASK: Final = "为不熟悉智能手机的用户提供安全、通用的手动操作说明"
 GENERAL_GUIDANCE_RULES: Final = (
@@ -101,6 +107,26 @@ class StructuredGuidanceParser:
             raise ModelOutputValidationError(str(error)) from error
 
 
+class ApprovedActionReferenceParser:
+    """Accept only stable IDs from a model; wording always comes from the catalog."""
+
+    def parse(self, payload: Mapping[str, object]) -> tuple[str, ...]:
+        if set(payload) != MAX_MODEL_ACTION_OUTPUT_KEYS:
+            raise ModelOutputValidationError("model output must contain only action_ids")
+        raw_action_ids = payload["action_ids"]
+        if not isinstance(raw_action_ids, list) or not 1 <= len(raw_action_ids) <= 20:
+            raise ModelOutputValidationError("model action_ids must contain 1 to 20 items")
+        action_ids = tuple(raw_action_ids)
+        if any(
+            not isinstance(action_id, str) or not action_id.strip() or len(action_id) > 120
+            for action_id in action_ids
+        ):
+            raise ModelOutputValidationError("model action_ids must be non-empty short strings")
+        if len(set(action_ids)) != len(action_ids):
+            raise ModelOutputValidationError("model action_ids must be unique")
+        return action_ids
+
+
 class SafeGuidanceModelProcessor:
     """Wrap one model call and turn every failure into a review outcome."""
 
@@ -109,6 +135,8 @@ class SafeGuidanceModelProcessor:
         model: GuidanceModel,
         *,
         parser: StructuredGuidanceParser | None = None,
+        action_reference_parser: ApprovedActionReferenceParser | None = None,
+        action_catalog: GuidanceActionCatalog | None = None,
         clock: Callable[[], datetime] | None = None,
         model_timeout: timedelta = DEFAULT_MODEL_TIMEOUT,
     ) -> None:
@@ -116,6 +144,8 @@ class SafeGuidanceModelProcessor:
             raise ValueError("model_timeout must be positive")
         self._model = model
         self._parser = parser or StructuredGuidanceParser()
+        self._action_reference_parser = action_reference_parser or ApprovedActionReferenceParser()
+        self._action_catalog = action_catalog or default_guidance_action_catalog()
         self._clock = clock or (lambda: datetime.now(UTC))
         self._model_timeout = model_timeout
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="guidance-model")
@@ -157,8 +187,9 @@ class SafeGuidanceModelProcessor:
             return _review_outcome("模型调用失败, 已转人工复核.")
         self._call_slot.release()
         try:
-            guidance = self._parser.parse(payload)
-        except Exception:
+            action_ids = self._action_reference_parser.parse(payload)
+            guidance = self._action_catalog.resolve(action_ids)
+        except (ModelOutputValidationError, UnknownGuidanceAction):
             return _review_outcome("模型输出未通过结构化安全校验, 需要人工复核.")
         return HelpRequestProcessorOutcome(
             status=HelpRequestProcessingStatus.GUIDANCE_READY,

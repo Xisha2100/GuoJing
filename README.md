@@ -535,7 +535,7 @@ POST /api/v1/admin/help-requests/{request_id}/process
 
 ## 下一步
 
-模块 30 为模型调用补齐最小任务上下文、deadline 和单调用隔离；超时调用会 fail closed 到人工复核。下一阶段可继续落实 transition/risk allowlist、可回收 processing lease 与 Android 端证据发送用例；模型输出仍不能直接连到 Android 操作执行。
+模块 31 已将自动指引收紧为审核 action ID 的解析，并按动作风险等级授权。接下来实现 Android 端 Evidence Envelope 的真实发送链路；模型输出仍不能直接连到 Android 操作执行。
 
 ## License
 
