@@ -83,7 +83,17 @@ def create_app(
         assert help_request_service is not None
         help_request_evidence_service = HelpRequestEvidenceService(
             help_request_service,
-            SqlAlchemyHelpRequestEvidenceRepository(database),
+            SqlAlchemyHelpRequestEvidenceRepository(
+                database,
+                max_envelopes_per_request=app_settings.help_request_evidence_max_per_request,
+            ),
+            max_capture_age=timedelta(
+                minutes=app_settings.help_request_evidence_max_age_minutes,
+            ),
+            max_future_skew=timedelta(
+                seconds=app_settings.help_request_evidence_future_skew_seconds,
+            ),
+            server_ttl=timedelta(minutes=app_settings.help_request_evidence_ttl_minutes),
         )
     if help_request_workflow is None:
         assert tutorial_service is not None

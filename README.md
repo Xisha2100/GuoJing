@@ -511,7 +511,7 @@ POST /api/v1/admin/help-requests/{request_id}/process
 
 ## 下一步
 
-模块 27 已把模块 21–25 的主要组件接入生产 composition root，并验证了“提交求助 → 上传证据 → 管理员运行 → 重启后轮询”的后端链路。下一阶段优先补齐中期 review 中尚未解决的生产硬化：服务端证据时间窗口与归属、Repository compare-and-swap、模型最小任务上下文与真实超时、基于风险/transition allowlist 的危险操作防线，以及 Android 证据发送用例。完成这些边界后，再选择具体模型供应商和 Deep Agent SDK；模型输出仍不能直接连到 Android 操作执行。
+模块 28 将证据的时间边界移回服务端：接收时间决定“最新”，服务端覆盖客户端 TTL，并限制未来时间、过期时间与单求助的保留数量。接下来继续完成求助状态的 compare-and-swap，以及模型所需的最小任务上下文与 deadline；模型输出仍不能直接连到 Android 操作执行。
 
 ## License
 

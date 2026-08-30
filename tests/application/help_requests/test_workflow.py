@@ -111,7 +111,7 @@ def _request(intent: str = "recorded_tutorial") -> HelpRequestRequest:
 
 
 def _evidence(request_id: UUID, *, confidence: float = 1.0) -> EvidenceEnvelope:
-    captured = datetime(2026, 8, 30, 8, 0, tzinfo=UTC)
+    captured = datetime.now(UTC)
     return EvidenceEnvelope(
         evidence_id=uuid4(),
         request_id=request_id,

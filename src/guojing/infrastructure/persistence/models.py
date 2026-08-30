@@ -187,9 +187,9 @@ class HelpRequestEvidenceRecord(Base):
     __tablename__ = "help_request_evidence"
     __table_args__ = (
         Index(
-            "ix_help_request_evidence_request_captured",
+            "ix_help_request_evidence_request_received",
             "request_id",
-            "captured_at",
+            "received_at",
         ),
         Index("ix_help_request_evidence_expires_at", "expires_at"),
     )
@@ -206,6 +206,7 @@ class HelpRequestEvidenceRecord(Base):
     sharing_policy: Mapped[str] = mapped_column(String(40), nullable=False)
     structure_score: Mapped[float] = mapped_column(nullable=False)
     captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     anchors_json: Mapped[str] = mapped_column(Text, nullable=False)
     sanitized_screenshot_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)

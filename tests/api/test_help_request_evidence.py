@@ -123,3 +123,21 @@ def test_rejects_expired_evidence(client: TestClient) -> None:
 
     assert response.status_code == 422
     assert "expired" in response.json()["detail"]
+
+
+def test_caps_client_evidence_expiry_at_the_server_ttl(client: TestClient) -> None:
+    request = client.post("/api/v1/help-requests", json=_request_payload())
+    request_id = request.json()["request_id"]
+    captured = datetime.now(UTC)
+
+    response = client.post(
+        f"/api/v1/help-requests/{request_id}/evidence",
+        json=_evidence_payload(
+            captured_at=captured,
+            expires_at=captured + timedelta(days=1),
+        ),
+    )
+
+    assert response.status_code == 202
+    effective_expiry = datetime.fromisoformat(response.json()["expires_at"])
+    assert effective_expiry <= captured + timedelta(minutes=10, seconds=1)

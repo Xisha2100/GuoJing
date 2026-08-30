@@ -22,21 +22,39 @@ from guojing.infrastructure.persistence.tutorial_storage import as_utc
 class SqlAlchemyHelpRequestEvidenceRepository:
     """Store bounded evidence independently from the help-request image lifecycle."""
 
-    def __init__(self, database: Database, *, max_envelopes: int = 1_000) -> None:
+    def __init__(
+        self,
+        database: Database,
+        *,
+        max_envelopes: int = 1_000,
+        max_envelopes_per_request: int = 8,
+    ) -> None:
         if max_envelopes < 1:
             raise ValueError("max_envelopes must be positive")
+        if max_envelopes_per_request < 1:
+            raise ValueError("max_envelopes_per_request must be positive")
         self._database = database
         self._max_envelopes = max_envelopes
+        self._max_envelopes_per_request = max_envelopes_per_request
 
-    def save(self, envelope: EvidenceEnvelope, now: datetime) -> None:
+    def save(self, envelope: EvidenceEnvelope, now: datetime) -> EvidenceEnvelope:
         with self._database.new_session() as session, session.begin():
             _purge_expired(session, now)
             record = session.get(HelpRequestEvidenceRecord, str(envelope.evidence_id))
             if record is None:
-                session.add(_to_record(envelope))
+                session.add(_to_record(envelope, now))
             else:
-                _update_record(record, envelope)
+                stored = _from_record(record)
+                if not _same_submission(stored, envelope):
+                    raise ValueError("evidence_id cannot be reused with different content")
+                return stored
+            _evict_request_excess(
+                session,
+                envelope.request_id,
+                self._max_envelopes_per_request,
+            )
             _evict_if_full(session, self._max_envelopes)
+        return envelope
 
     def get_latest(self, request_id: UUID, now: datetime) -> EvidenceEnvelope | None:
         with self._database.new_session() as session, session.begin():
@@ -44,13 +62,16 @@ class SqlAlchemyHelpRequestEvidenceRepository:
             record = session.scalar(
                 select(HelpRequestEvidenceRecord)
                 .where(HelpRequestEvidenceRecord.request_id == str(request_id))
-                .order_by(HelpRequestEvidenceRecord.captured_at.desc())
+                .order_by(
+                    HelpRequestEvidenceRecord.received_at.desc(),
+                    HelpRequestEvidenceRecord.evidence_id.desc(),
+                )
                 .limit(1)
             )
             return _from_record(record) if record is not None else None
 
 
-def _to_record(envelope: EvidenceEnvelope) -> HelpRequestEvidenceRecord:
+def _to_record(envelope: EvidenceEnvelope, received_at: datetime) -> HelpRequestEvidenceRecord:
     return HelpRequestEvidenceRecord(
         evidence_id=str(envelope.evidence_id),
         request_id=str(envelope.request_id),
@@ -61,25 +82,11 @@ def _to_record(envelope: EvidenceEnvelope) -> HelpRequestEvidenceRecord:
         sharing_policy=envelope.sharing_policy.value,
         structure_score=envelope.structure_score,
         captured_at=envelope.captured_at,
+        received_at=received_at,
         expires_at=envelope.expires_at,
         anchors_json=_serialize_anchors(envelope),
         sanitized_screenshot_sha256=envelope.sanitized_screenshot_sha256,
     )
-
-
-def _update_record(record: HelpRequestEvidenceRecord, envelope: EvidenceEnvelope) -> None:
-    if record.request_id != str(envelope.request_id):
-        raise ValueError("evidence_id cannot be reused for another request")
-    record.package_name = envelope.package_name
-    record.version_name = envelope.version_name
-    record.version_code = envelope.version_code
-    record.source = envelope.source.value
-    record.sharing_policy = envelope.sharing_policy.value
-    record.structure_score = envelope.structure_score
-    record.captured_at = envelope.captured_at
-    record.expires_at = envelope.expires_at
-    record.anchors_json = _serialize_anchors(envelope)
-    record.sanitized_screenshot_sha256 = envelope.sanitized_screenshot_sha256
 
 
 def _from_record(record: HelpRequestEvidenceRecord) -> EvidenceEnvelope:
@@ -150,8 +157,46 @@ def _purge_expired(session: Session, now: datetime) -> None:
 def _evict_if_full(session: Session, max_envelopes: int) -> None:
     records = session.scalars(
         select(HelpRequestEvidenceRecord)
-        .order_by(HelpRequestEvidenceRecord.captured_at.desc())
+        .order_by(
+            HelpRequestEvidenceRecord.received_at.desc(),
+            HelpRequestEvidenceRecord.evidence_id.desc(),
+        )
         .offset(max_envelopes)
     ).all()
     for record in records:
         session.delete(record)
+
+
+def _evict_request_excess(
+    session: Session,
+    request_id: UUID,
+    max_envelopes_per_request: int,
+) -> None:
+    records = session.scalars(
+        select(HelpRequestEvidenceRecord)
+        .where(HelpRequestEvidenceRecord.request_id == str(request_id))
+        .order_by(
+            HelpRequestEvidenceRecord.received_at.desc(),
+            HelpRequestEvidenceRecord.evidence_id.desc(),
+        )
+        .offset(max_envelopes_per_request)
+    ).all()
+    for record in records:
+        session.delete(record)
+
+
+def _same_submission(stored: EvidenceEnvelope, incoming: EvidenceEnvelope) -> bool:
+    """Compare client-owned content while allowing server TTL normalization."""
+    return (
+        stored.evidence_id == incoming.evidence_id
+        and stored.request_id == incoming.request_id
+        and stored.package_name == incoming.package_name
+        and stored.version_name == incoming.version_name
+        and stored.version_code == incoming.version_code
+        and stored.source is incoming.source
+        and stored.sharing_policy is incoming.sharing_policy
+        and stored.structure_score == incoming.structure_score
+        and stored.captured_at == incoming.captured_at
+        and stored.anchors == incoming.anchors
+        and stored.sanitized_screenshot_sha256 == incoming.sanitized_screenshot_sha256
+    )

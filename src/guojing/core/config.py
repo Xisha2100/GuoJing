@@ -34,6 +34,10 @@ class Settings(BaseSettings):
     admin_session_ttl_minutes: int = Field(default=480, ge=15, le=1440)
     admin_login_window_minutes: int = Field(default=15, ge=1, le=60)
     admin_maximum_login_failures: int = Field(default=5, ge=1, le=20)
+    help_request_evidence_max_age_minutes: int = Field(default=15, ge=1, le=60)
+    help_request_evidence_ttl_minutes: int = Field(default=10, ge=1, le=30)
+    help_request_evidence_future_skew_seconds: int = Field(default=30, ge=0, le=300)
+    help_request_evidence_max_per_request: int = Field(default=8, ge=1, le=64)
 
     @model_validator(mode="after")
     def require_secure_admin_cookie_outside_local_environments(self) -> "Settings":
