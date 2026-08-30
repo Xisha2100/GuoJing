@@ -535,7 +535,7 @@ POST /api/v1/admin/help-requests/{request_id}/process
 
 ## 下一步
 
-模块 39 给 Deep Agent 预留最小适配端口：只收安全上下文，只返回已批准 action ID。下一步加入首个相机教程图。
+模块 40 提供了首个系统功能教程样例“使用相机拍照”。它是待管理员验证、发布的状态图；后续将以相同方式补齐通讯录、图库、微信和出行场景。
 
 ## License
 
