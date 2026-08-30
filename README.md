@@ -535,7 +535,7 @@ POST /api/v1/admin/help-requests/{request_id}/process
 
 ## 下一步
 
-模块 37 加入有上限的指数退避策略，达到预算时停止重试并交给人工处理。下一步补齐审计事件的关联标识。
+模块 38 定义仅含操作元数据的后台审计事件，避免把截图或 OCR 误写入日志。下一步把 Deep Agent 限制在已批准 action catalog 内。
 
 ## License
 
