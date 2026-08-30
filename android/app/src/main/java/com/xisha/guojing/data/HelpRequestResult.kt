@@ -59,6 +59,15 @@ data class HelpRequestTutorialMatch(
     val revisionNumber: Int? = null,
 )
 
+/** A server-pinned set of low-risk transitions; it never authorizes an automatic action. */
+data class HelpRequestTutorialPlan(
+    val graphId: String,
+    val nodeId: String,
+    val revisionNumber: Int,
+    val compatibilityStatus: String,
+    val allowedTransitionIds: List<String>,
+)
+
 data class HelpRequestResult(
     val requestId: String,
     val clientRequestId: String,
@@ -71,6 +80,7 @@ data class HelpRequestResult(
     val humanReviewReason: String? = null,
     val workflowStage: HelpRequestWorkflowStage? = null,
     val tutorialMatch: HelpRequestTutorialMatch? = null,
+    val tutorialPlan: HelpRequestTutorialPlan? = null,
 )
 
 fun interface HelpRequestStatusReader {
@@ -123,6 +133,7 @@ class HttpHelpRequestStatusReader internal constructor(
             HelpRequestWorkflowStage::fromWire,
         )
         val tutorialMatch = root.optionalTutorialMatch()
+        val tutorialPlan = root.optionalTutorialPlan()
         if (processingStatus == HelpRequestProcessingStatus.GUIDANCE_READY && guidance == null) {
             throw HelpRequestFormatException(
                 "guidance_ready results must include guidance",
@@ -147,7 +158,7 @@ class HttpHelpRequestStatusReader internal constructor(
                 "a review reason is only allowed during human review",
             )
         }
-        validateWorkflowProjection(processingStatus, workflowStage, tutorialMatch)
+        validateWorkflowProjection(processingStatus, workflowStage, tutorialMatch, tutorialPlan)
         val intent = HelpRequestIntent.fromWire(root.requiredString("intent"))
         val processingRoute = root.requiredString("processing_route")
         val expectedRoute = when (intent) {
@@ -169,6 +180,7 @@ class HttpHelpRequestStatusReader internal constructor(
             humanReviewReason = humanReviewReason,
             workflowStage = workflowStage,
             tutorialMatch = tutorialMatch,
+            tutorialPlan = tutorialPlan,
         )
     } catch (error: HelpRequestFormatException) {
         throw error
@@ -233,10 +245,34 @@ class HttpHelpRequestStatusReader internal constructor(
         )
     }
 
+    private fun JsonObject.optionalTutorialPlan(): HelpRequestTutorialPlan? {
+        val value = this["tutorial_plan"]
+        if (value == null || value is JsonNull) return null
+        val plan = value as? JsonObject
+            ?: throw HelpRequestFormatException("Help request tutorial_plan must be an object")
+        val transitionIds = plan["allowed_transition_ids"] as? JsonArray
+            ?: throw HelpRequestFormatException("Help request tutorial_plan has no transition array")
+        if (transitionIds.size > 20) {
+            throw HelpRequestFormatException("Help request tutorial_plan has too many transitions")
+        }
+        val ids = transitionIds.map { it.jsonPrimitive.content }
+        if (ids.any { it.isBlank() } || ids.distinct().size != ids.size) {
+            throw HelpRequestFormatException("Help request tutorial_plan transition ids are invalid")
+        }
+        return HelpRequestTutorialPlan(
+            graphId = plan.requiredString("graph_id"),
+            nodeId = plan.requiredString("node_id"),
+            revisionNumber = plan.requiredInt("revision_number"),
+            compatibilityStatus = plan.requiredString("compatibility_status"),
+            allowedTransitionIds = ids,
+        )
+    }
+
     private fun validateWorkflowProjection(
         processingStatus: HelpRequestProcessingStatus,
         workflowStage: HelpRequestWorkflowStage?,
         tutorialMatch: HelpRequestTutorialMatch?,
+        tutorialPlan: HelpRequestTutorialPlan?,
     ) {
         when (workflowStage) {
             null -> return
@@ -254,7 +290,11 @@ class HttpHelpRequestStatusReader internal constructor(
             }
             HelpRequestWorkflowStage.TUTORIAL_MATCHED -> {
                 if (processingStatus != HelpRequestProcessingStatus.NEEDS_HUMAN_REVIEW ||
-                    tutorialMatch?.status != "matched"
+                    tutorialMatch?.status != "matched" ||
+                    tutorialPlan == null ||
+                    tutorialPlan.graphId != tutorialMatch.graphId ||
+                    tutorialPlan.nodeId != tutorialMatch.nodeId ||
+                    tutorialPlan.revisionNumber != tutorialMatch.revisionNumber
                 ) {
                     throw HelpRequestFormatException(
                         "tutorial_matched workflow stage has an invalid projection",
@@ -296,6 +336,10 @@ class HttpHelpRequestStatusReader internal constructor(
         }
         return value
     }
+
+    private fun JsonObject.requiredInt(name: String): Int =
+        this[name]?.jsonPrimitive?.intOrNull?.takeIf { it > 0 }
+            ?: throw HelpRequestFormatException("Help request result has no positive '$name'")
 
     private fun JsonObject.requiredUuidString(name: String): String {
         val value = requiredString(name)

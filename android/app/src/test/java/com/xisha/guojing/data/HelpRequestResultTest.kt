@@ -49,6 +49,7 @@ class HelpRequestResultTest {
         assertEquals("wechat_open_family_chat", result.tutorialMatch?.graphId)
         assertEquals("chat_list", result.tutorialMatch?.nodeId)
         assertEquals(1, result.tutorialMatch?.revisionNumber)
+        assertEquals(listOf("open_family_chat"), result.tutorialPlan?.allowedTransitionIds)
     }
 
     @Test
@@ -240,6 +241,13 @@ class HelpRequestResultTest {
                 "graph_id": "wechat_open_family_chat",
                 "node_id": "chat_list",
                 "revision_number": 1
+              },
+              "tutorial_plan": {
+                "graph_id": "wechat_open_family_chat",
+                "node_id": "chat_list",
+                "revision_number": 1,
+                "compatibility_status": "verified",
+                "allowed_transition_ids": ["open_family_chat"]
               }
             }
             """.trimIndent()

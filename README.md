@@ -535,7 +535,7 @@ POST /api/v1/admin/help-requests/{request_id}/process
 
 ## 下一步
 
-模块 34 会将匹配结果固定为特定教程修订、节点和低风险 transition ID；客户端只能据此解释下一步，不能自行推断动作。接下来把该计划接入 Android 的教程执行循环。
+模块 35 让 Android fail-closed 解析固定教程计划，并校验它与匹配结果完全一致。下一步为后台 worker 加入可恢复的处理 lease。
 
 ## License
 
