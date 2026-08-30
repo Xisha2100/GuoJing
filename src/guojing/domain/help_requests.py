@@ -1,6 +1,6 @@
 """Privacy-bound value objects for screenshot help requests."""
 
-import re
+import unicodedata
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
@@ -36,16 +36,35 @@ class HelpRequestProcessingStatus(StrEnum):
     GUIDANCE_READY = "guidance_ready"
 
 
-_UNSAFE_GUIDANCE_PATTERN = re.compile(
-    r"(?:转账|付款|支付|发红包|删除账号|注销账号|输入密码|输入验证码|确认购买|立即下单)",
+_UNSAFE_GUIDANCE_TERMS = (
+    "转账",
+    "汇款",
+    "付款",
+    "支付",
+    "发红包",
+    "删除账号",
+    "确认删除",
+    "注销账号",
+    "输入密码",
+    "填写密码",
+    "键入密码",
+    "输入验证码",
+    "填写验证码",
+    "确认购买",
+    "立即下单",
+    "确认下单",
+    "购买",
 )
 
 
 def find_unsafe_guidance_terms(value: str) -> tuple[str, ...]:
     """Return dangerous operations that must never become automatic guidance."""
-    return tuple(
-        dict.fromkeys(match.group(0) for match in _UNSAFE_GUIDANCE_PATTERN.finditer(value))
+    normalized = "".join(
+        character
+        for character in unicodedata.normalize("NFKC", value).casefold()
+        if character.isalnum()
     )
+    return tuple(term for term in _UNSAFE_GUIDANCE_TERMS if term in normalized)
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,6 +107,10 @@ class HelpRequestGuidance:
     def __post_init__(self) -> None:
         if not self.title.strip() or len(self.title) > 160:
             raise ValueError("guidance title must contain 1 to 160 characters")
+        unsafe_terms = find_unsafe_guidance_terms(self.title)
+        if unsafe_terms:
+            joined = ", ".join(unsafe_terms)
+            raise ValueError(f"guidance contains blocked irreversible operations: {joined}")
         if not 1 <= len(self.steps) <= 20:
             raise ValueError("guidance must contain 1 to 20 steps")
 

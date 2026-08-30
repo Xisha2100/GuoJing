@@ -131,6 +131,9 @@ def test_rejects_a_digest_that_does_not_match_the_image(client: TestClient) -> N
 
     assert response.status_code == 422
     assert "digest" in response.json()["detail"]
+    assert str(payload["sanitized_image_base64"]) not in response.text
+    assert response.headers["cache-control"] == "no-store"
+    assert response.headers["pragma"] == "no-cache"
 
 
 def test_rejects_missing_explicit_send_consent(client: TestClient) -> None:
@@ -159,6 +162,36 @@ def test_rejects_non_base64_image_bytes(client: TestClient) -> None:
     assert response.status_code == 422
 
 
+def test_validation_error_does_not_echo_question_or_image(client: TestClient) -> None:
+    payload = _payload()
+    payload["question"] = "这是不应出现在错误响应中的问题"
+    payload["redaction_count"] = 1
+    payload["no_sensitive_content_confirmed"] = True
+
+    response = client.post("/api/v1/help-requests", json=payload)
+
+    assert response.status_code == 422
+    assert str(payload["question"]) not in response.text
+    assert str(payload["sanitized_image_base64"]) not in response.text
+    assert response.json()["detail"]["code"] == "invalid_help_request"
+    assert all("input" not in issue for issue in response.json()["detail"]["issues"])
+    assert response.headers["cache-control"] == "no-store"
+
+
+def test_oversized_raw_body_is_rejected_before_json_parsing(client: TestClient) -> None:
+    oversized = b"{" + b"x" * (12 * 1024 * 1024) + b"}"
+
+    response = client.post(
+        "/api/v1/help-requests",
+        content=oversized,
+        headers={"content-type": "application/json"},
+    )
+
+    assert response.status_code == 413
+    assert response.json()["detail"]["code"] == "request_body_too_large"
+    assert response.headers["cache-control"] == "no-store"
+
+
 def test_repeating_the_same_client_request_is_idempotent(client: TestClient) -> None:
     payload = _payload()
 
@@ -179,3 +212,34 @@ def test_reusing_a_client_request_id_for_different_data_is_rejected(client: Test
 
     assert response.status_code == 422
     assert "reused" in response.json()["detail"]
+    assert str(payload["question"]) not in response.text
+
+
+def test_replayed_post_keeps_acceptance_receipt_shape_after_processing(
+    client: TestClient,
+) -> None:
+    payload = _payload(intent="general_guidance")
+    first = client.post("/api/v1/help-requests", json=payload)
+    request_id = UUID(first.json()["request_id"])
+    service = cast(FastAPI, client.app).state.help_request_service
+    assert isinstance(service, HelpRequestService)
+    service.mark_processing(request_id)
+    service.publish_guidance(
+        request_id,
+        HelpRequestGuidance(
+            title="基础指引",
+            steps=(
+                HelpRequestGuidanceStep(
+                    step_id="one",
+                    title="看标题",
+                    instruction="请你亲自确认页面标题。",
+                ),
+            ),
+        ),
+    )
+
+    replay = client.post("/api/v1/help-requests", json=payload)
+
+    assert replay.status_code == 202
+    assert replay.json()["processing_status"] == "received"
+    assert replay.json()["guidance"] is None

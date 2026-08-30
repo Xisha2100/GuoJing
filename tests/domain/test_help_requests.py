@@ -2,6 +2,7 @@
 
 from datetime import UTC, datetime
 from hashlib import sha256
+from typing import NoReturn
 from uuid import uuid4
 
 import pytest
@@ -12,6 +13,7 @@ from guojing.domain.help_requests import (
     HelpRequestGuidance,
     HelpRequestGuidanceStep,
     HelpRequestProcessingStatus,
+    HelpRequestResult,
 )
 
 
@@ -106,6 +108,20 @@ def test_guidance_rejects_financial_and_irreversible_instructions() -> None:
         )
 
 
+def test_guidance_rejects_unsafe_title_and_spaced_synonym() -> None:
+    with pytest.raises(ValueError, match="blocked irreversible"):
+        HelpRequestGuidance(
+            title="请 确认 购 买",
+            steps=(
+                HelpRequestGuidanceStep(
+                    step_id="safe",
+                    title="说明",
+                    instruction="请你亲自查看页面。",
+                ),
+            ),
+        )
+
+
 def test_unknown_result_is_not_exposed() -> None:
     service = HelpRequestService()
 
@@ -121,3 +137,18 @@ def test_in_memory_results_are_bounded() -> None:
     with pytest.raises(HelpRequestNotFound):
         service.get_result(first.request_id)
     assert service.get_result(second.request_id).request_id == second.request_id
+
+
+def test_processor_exception_is_converted_to_human_review() -> None:
+    service = HelpRequestService()
+    receipt = service.accept(_request())
+
+    class BrokenProcessor:
+        def process(self, _request: HelpRequestResult) -> NoReturn:
+            raise TimeoutError("upstream unavailable")
+
+    result = service.process(receipt.request_id, BrokenProcessor())
+
+    assert result.processing_status is HelpRequestProcessingStatus.NEEDS_HUMAN_REVIEW
+    assert result.human_review_reason is not None
+    assert "upstream" not in result.human_review_reason

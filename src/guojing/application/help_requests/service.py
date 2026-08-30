@@ -35,6 +35,9 @@ class HelpRequestNotFound(LookupError):
     """Raised when a status query references an unknown or expired request."""
 
 
+PROCESSOR_FAILURE_REVIEW_REASON = "处理服务暂时不可用, 请由人工复核后重试."
+
+
 class HelpRequestService:
     """Validate, route and immediately forget one sanitized screenshot."""
 
@@ -129,17 +132,26 @@ class HelpRequestService:
         processor: HelpRequestProcessor,
     ) -> HelpRequestResult:
         """Run one metadata-only processor and apply its bounded outcome."""
-        current = self.mark_processing(request_id)
-        outcome = processor.process(current)
-        if outcome.status is HelpRequestProcessingStatus.NEEDS_HUMAN_REVIEW:
-            if outcome.review_reason is None:
-                raise ValueError("review outcome needs a reason")
-            return self.mark_needs_human_review(request_id, outcome.review_reason)
-        if outcome.status is HelpRequestProcessingStatus.GUIDANCE_READY:
-            if outcome.guidance is None:
-                raise ValueError("guidance outcome needs guidance")
-            return self.publish_guidance(request_id, outcome.guidance)
-        raise ValueError(f"processor returned unsupported terminal status {outcome.status}")
+        current = self.get_result(request_id)
+        if current.processing_status is HelpRequestProcessingStatus.RECEIVED:
+            current = self.mark_processing(request_id)
+        elif current.processing_status is not HelpRequestProcessingStatus.PROCESSING:
+            raise ValueError(
+                f"cannot process request in status {current.processing_status}",
+            )
+        try:
+            outcome = processor.process(current)
+            if outcome.status is HelpRequestProcessingStatus.NEEDS_HUMAN_REVIEW:
+                if outcome.review_reason is None:
+                    raise ValueError("review outcome needs a reason")
+                return self.mark_needs_human_review(request_id, outcome.review_reason)
+            if outcome.status is HelpRequestProcessingStatus.GUIDANCE_READY:
+                if outcome.guidance is None:
+                    raise ValueError("guidance outcome needs guidance")
+                return self.publish_guidance(request_id, outcome.guidance)
+            raise ValueError(f"processor returned unsupported terminal status {outcome.status}")
+        except Exception:
+            return self.mark_needs_human_review(request_id, PROCESSOR_FAILURE_REVIEW_REASON)
 
     def mark_processing(self, request_id: UUID) -> HelpRequestResult:
         """Move a received request into the worker-processing state."""
@@ -198,5 +210,7 @@ class HelpRequestService:
             intent=result.intent,
             processing_route=result.processing_route,
             received_at=result.received_at,
-            processing_status=result.processing_status,
+            # A POST receipt describes acceptance, not the current worker result.
+            # Replays therefore cannot claim guidance_ready without its payload.
+            processing_status=HelpRequestProcessingStatus.RECEIVED,
         )

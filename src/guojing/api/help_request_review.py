@@ -112,6 +112,21 @@ def process_help_request(
     auth_service: AuthServiceDependency,
 ) -> HelpRequestResultResponse:
     """Run the no-model processor through the same authenticated admin boundary."""
+    # Help-request state and the admin audit repository do not yet share a
+    # database transaction.  Write the durable operator intent first so an
+    # audit outage cannot leave a successful-looking state transition with no
+    # corresponding record.  The deterministic operation id lets a future
+    # outbox/replay worker correlate retries without exposing request content.
+    auth_service.record_action(
+        _admin,
+        "help_request.process_requested",
+        "help_request",
+        str(request_id),
+        {
+            "operation_id": f"help-request:{request_id}:process",
+            "phase": "requested",
+        },
+    )
     try:
         result = service.process(request_id, DeterministicHelpRequestProcessor())
     except HelpRequestNotFound as error:
@@ -121,13 +136,6 @@ def process_help_request(
         ) from error
     except ValueError as error:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
-    auth_service.record_action(
-        _admin,
-        "help_request.processed",
-        "help_request",
-        str(request_id),
-        {"processing_status": result.processing_status.value},
-    )
     return HelpRequestResultResponse.from_domain(result)
 
 
@@ -150,6 +158,20 @@ def publish_reviewed_guidance(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=str(error),
         ) from error
+    # See process_help_request: this is intentionally a request event rather
+    # than a post-transition "published" claim until both repositories can be
+    # committed atomically (or an outbox is introduced).
+    auth_service.record_action(
+        admin,
+        "help_request.guidance_publish_requested",
+        "help_request",
+        str(request_id),
+        {
+            "operation_id": f"help-request:{request_id}:guidance-publish",
+            "phase": "requested",
+            "step_count": len(guidance.steps),
+        },
+    )
     try:
         result = service.publish_guidance(request_id, domain_guidance)
     except HelpRequestNotFound as error:
@@ -159,11 +181,4 @@ def publish_reviewed_guidance(
         ) from error
     except ValueError as error:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
-    auth_service.record_action(
-        admin,
-        "help_request.guidance_published",
-        "help_request",
-        str(request_id),
-        {"step_count": len(guidance.steps)},
-    )
     return HelpRequestResultResponse.from_domain(result)

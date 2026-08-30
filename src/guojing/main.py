@@ -5,7 +5,10 @@ from contextlib import asynccontextmanager
 from datetime import timedelta
 
 from fastapi import FastAPI
+from fastapi.exceptions import RequestValidationError
 
+from guojing.api.error_handlers import handle_request_validation_error
+from guojing.api.middleware import HelpRequestSecurityMiddleware
 from guojing.api.router import api_router
 from guojing.application.auth.service import AdminAuthService
 from guojing.application.help_requests.evidence_service import HelpRequestEvidenceService
@@ -89,6 +92,11 @@ def create_app(
         title=app_settings.app_name,
         debug=app_settings.debug,
         lifespan=lifespan,
+    )
+    application.add_middleware(HelpRequestSecurityMiddleware)
+    application.add_exception_handler(
+        RequestValidationError,
+        handle_request_validation_error,
     )
     application.state.settings = app_settings
     application.state.tutorial_service = tutorial_service

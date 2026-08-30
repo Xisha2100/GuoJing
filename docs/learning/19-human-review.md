@@ -15,7 +15,12 @@ POST /api/v1/admin/help-requests/{request_id}/guidance
 
 ## 3. 权限与审计
 
-两个接口都需要管理员会话和 CSRF 双提交证明。成功发布后写入 `help_request.guidance_published` 审计事件，未来家属端可以复用同一领域结果而不直接绕过审核台。
+两个接口都需要管理员会话和 CSRF 双提交证明。状态变更前先写入
+`help_request.process_requested` 或 `help_request.guidance_publish_requested` 审计事件，
+并带有由请求 ID 推导的稳定 `operation_id`。这样审计仓库故障时状态不会先改变；
+由于求助结果与审计目前不共享事务，这里审计的是管理员发起的请求，而不是假装
+“已经成功发布”。未来引入 Unit of Work 或 transactional outbox 后，再增加可证明
+成功的完成事件。
 
 ## 4. 为什么领域层仍要校验
 
