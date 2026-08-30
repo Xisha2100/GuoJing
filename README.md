@@ -535,7 +535,7 @@ POST /api/v1/admin/help-requests/{request_id}/process
 
 ## 下一步
 
-模块 35 让 Android fail-closed 解析固定教程计划，并校验它与匹配结果完全一致。下一步为后台 worker 加入可恢复的处理 lease。
+模块 36 定义后台处理的短期租约规则：到期可接管、未到期只能原 worker 续租。下一步加入可观测的重试预算。
 
 ## License
 
