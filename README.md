@@ -535,7 +535,7 @@ POST /api/v1/admin/help-requests/{request_id}/process
 
 ## 下一步
 
-模块 43 为处理审计提供严格的日志/Outbox 投影。接下来将相机教程作为可导入模板提供给管理端。
+模块 44 提供可显式选择的相机教程草稿模板，仍须管理员验证和发布。下一步为 Android 增加教程模板的本地展示模型。
 
 ## License
 
