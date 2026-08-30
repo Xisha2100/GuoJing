@@ -144,29 +144,29 @@ class HelpRequestService:
             )
         try:
             outcome = processor.process(current)
-            if outcome.status is HelpRequestProcessingStatus.NEEDS_HUMAN_REVIEW:
-                if outcome.review_reason is None:
-                    raise ValueError("review outcome needs a reason")
-                return self.mark_needs_human_review(
-                    request_id,
-                    outcome.review_reason,
-                    workflow_stage=workflow_stage,
-                )
-            if outcome.status is HelpRequestProcessingStatus.GUIDANCE_READY:
-                if outcome.guidance is None:
-                    raise ValueError("guidance outcome needs guidance")
-                return self.publish_guidance(
-                    request_id,
-                    outcome.guidance,
-                    workflow_stage=workflow_stage,
-                )
-            raise ValueError(f"processor returned unsupported terminal status {outcome.status}")
         except Exception:
             return self.mark_needs_human_review(
                 request_id,
                 PROCESSOR_FAILURE_REVIEW_REASON,
                 workflow_stage=workflow_stage,
             )
+        if outcome.status is HelpRequestProcessingStatus.NEEDS_HUMAN_REVIEW:
+            if outcome.review_reason is None:
+                raise ValueError("review outcome needs a reason")
+            return self.mark_needs_human_review(
+                request_id,
+                outcome.review_reason,
+                workflow_stage=workflow_stage,
+            )
+        if outcome.status is HelpRequestProcessingStatus.GUIDANCE_READY:
+            if outcome.guidance is None:
+                raise ValueError("guidance outcome needs guidance")
+            return self.publish_guidance(
+                request_id,
+                outcome.guidance,
+                workflow_stage=workflow_stage,
+            )
+        raise ValueError(f"processor returned unsupported terminal status {outcome.status}")
 
     def mark_processing(
         self,
@@ -235,7 +235,7 @@ class HelpRequestService:
             workflow_stage=workflow_stage,
             tutorial_match=tutorial_match,
         )
-        self._repository.save(updated, now)
+        self._repository.save(updated, result.state_version, now)
         return updated
 
     @staticmethod

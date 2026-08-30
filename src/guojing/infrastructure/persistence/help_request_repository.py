@@ -4,11 +4,14 @@ import json
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from guojing.application.help_requests.ports import ClientRequestConflictError
+from guojing.application.help_requests.ports import (
+    ClientRequestConflictError,
+    HelpRequestStateConflictError,
+)
 from guojing.domain.help_requests import (
     HelpRequestGuidance,
     HelpRequestGuidanceStep,
@@ -85,32 +88,23 @@ class SqlAlchemyHelpRequestRepository:
             records = session.scalars(statement).all()
             return tuple(_from_record(record) for record in records)
 
-    def save(self, result: HelpRequestResult, now: datetime) -> None:
+    def save(self, result: HelpRequestResult, expected_version: int, now: datetime) -> None:
+        if result.state_version != expected_version + 1:
+            raise ValueError("state transition must increment state_version by one")
         with self._database.new_session() as session, session.begin():
             _purge_expired(session, now)
-            record = session.get(HelpRequestResultRecord, str(result.request_id))
-            if record is None:
-                return
-            record.processing_status = result.processing_status.value
-            record.updated_at = result.updated_at
-            record.guidance_json = _serialize_guidance(result.guidance)
-            record.human_review_reason = result.human_review_reason
-            record.workflow_stage = result.workflow_stage
-            record.tutorial_match_status = (
-                result.tutorial_match.status if result.tutorial_match is not None else None
+            updated = session.execute(
+                update(HelpRequestResultRecord)
+                .where(
+                    HelpRequestResultRecord.request_id == str(result.request_id),
+                    HelpRequestResultRecord.state_version == expected_version,
+                )
+                .values(**_transition_values(result))
             )
-            record.tutorial_match_reason = (
-                result.tutorial_match.reason if result.tutorial_match is not None else None
-            )
-            record.tutorial_graph_id = (
-                result.tutorial_match.graph_id if result.tutorial_match is not None else None
-            )
-            record.tutorial_node_id = (
-                result.tutorial_match.node_id if result.tutorial_match is not None else None
-            )
-            record.tutorial_revision_number = (
-                result.tutorial_match.revision_number if result.tutorial_match is not None else None
-            )
+            if getattr(updated, "rowcount", None) != 1:
+                raise HelpRequestStateConflictError(
+                    "help request result was updated by another worker",
+                )
 
     def _get_by_client_request_id(
         self,
@@ -141,6 +135,7 @@ def _to_record(
         processing_status=result.processing_status.value,
         received_at=result.received_at,
         updated_at=result.updated_at,
+        state_version=result.state_version,
         expires_at=expires_at,
         guidance_json=_serialize_guidance(result.guidance),
         human_review_reason=result.human_review_reason,
@@ -174,6 +169,7 @@ def _from_record(record: HelpRequestResultRecord) -> HelpRequestResult:
         processing_status=HelpRequestProcessingStatus(record.processing_status),
         received_at=as_utc(record.received_at),
         updated_at=as_utc(record.updated_at),
+        state_version=record.state_version,
         guidance=guidance,
         human_review_reason=record.human_review_reason,
         workflow_stage=record.workflow_stage,
@@ -202,6 +198,33 @@ def _deserialize_tutorial_match(
         node_id=record.tutorial_node_id,
         revision_number=record.tutorial_revision_number,
     )
+
+
+def _transition_values(result: HelpRequestResult) -> dict[str, object]:
+    """Map the mutable projection fields used by the compare-and-swap update."""
+    return {
+        "processing_status": result.processing_status.value,
+        "updated_at": result.updated_at,
+        "state_version": result.state_version,
+        "guidance_json": _serialize_guidance(result.guidance),
+        "human_review_reason": result.human_review_reason,
+        "workflow_stage": result.workflow_stage,
+        "tutorial_match_status": (
+            result.tutorial_match.status if result.tutorial_match is not None else None
+        ),
+        "tutorial_match_reason": (
+            result.tutorial_match.reason if result.tutorial_match is not None else None
+        ),
+        "tutorial_graph_id": (
+            result.tutorial_match.graph_id if result.tutorial_match is not None else None
+        ),
+        "tutorial_node_id": (
+            result.tutorial_match.node_id if result.tutorial_match is not None else None
+        ),
+        "tutorial_revision_number": (
+            result.tutorial_match.revision_number if result.tutorial_match is not None else None
+        ),
+    }
 
 
 def _serialize_guidance(guidance: HelpRequestGuidance | None) -> str | None:

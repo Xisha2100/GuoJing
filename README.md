@@ -511,7 +511,7 @@ POST /api/v1/admin/help-requests/{request_id}/process
 
 ## 下一步
 
-模块 28 将证据的时间边界移回服务端：接收时间决定“最新”，服务端覆盖客户端 TTL，并限制未来时间、过期时间与单求助的保留数量。接下来继续完成求助状态的 compare-and-swap，以及模型所需的最小任务上下文与 deadline；模型输出仍不能直接连到 Android 操作执行。
+模块 29 为每个求助状态增加了乐观并发版本：旧 worker 的写入会被拒绝，而不能覆盖新终态。接下来实现模型最小任务上下文与 deadline；模型输出仍不能直接连到 Android 操作执行。
 
 ## License
 

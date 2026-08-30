@@ -6,6 +6,7 @@ from uuid import UUID
 
 from guojing.application.help_requests.ports import (
     ClientRequestConflictError,
+    HelpRequestStateConflictError,
 )
 from guojing.domain.help_requests import HelpRequestProcessingStatus, HelpRequestResult
 
@@ -61,13 +62,19 @@ class InMemoryHelpRequestRepository:
             values = tuple(value for value in values if value.processing_status is status)
         return tuple(sorted(values, key=lambda value: value.updated_at, reverse=True))
 
-    def save(self, result: HelpRequestResult, now: datetime) -> None:
+    def save(self, result: HelpRequestResult, expected_version: int, now: datetime) -> None:
         with self._lock:
             self._purge_expired(now)
             stored = self._records.get(result.request_id)
             if stored is None:
-                return
-            _, fingerprint, expires_at = stored
+                raise HelpRequestStateConflictError("help request result no longer exists")
+            current, fingerprint, expires_at = stored
+            if current.state_version != expected_version:
+                raise HelpRequestStateConflictError(
+                    "help request result was updated by another worker",
+                )
+            if result.state_version != expected_version + 1:
+                raise ValueError("state transition must increment state_version by one")
             self._records[result.request_id] = (result, fingerprint, expires_at)
 
     def _purge_expired(self, now: datetime) -> None:

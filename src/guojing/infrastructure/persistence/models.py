@@ -170,6 +170,7 @@ class HelpRequestResultRecord(Base):
     processing_status: Mapped[str] = mapped_column(String(40), nullable=False)
     received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    state_version: Mapped[int] = mapped_column(nullable=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     guidance_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     human_review_reason: Mapped[str | None] = mapped_column(Text, nullable=True)

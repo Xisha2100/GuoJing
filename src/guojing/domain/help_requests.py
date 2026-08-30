@@ -168,12 +168,15 @@ class HelpRequestResult:
     processing_status: HelpRequestProcessingStatus
     received_at: datetime
     updated_at: datetime
+    state_version: int = 1
     guidance: HelpRequestGuidance | None = None
     human_review_reason: str | None = None
     workflow_stage: str | None = None
     tutorial_match: HelpRequestTutorialMatch | None = None
 
     def __post_init__(self) -> None:
+        if self.state_version < 1:
+            raise ValueError("state_version must be positive")
         if self.updated_at < self.received_at:
             raise ValueError("updated_at cannot be earlier than received_at")
         if self.workflow_stage is not None and (
@@ -231,6 +234,7 @@ class HelpRequestResult:
             processing_status=status,
             received_at=self.received_at,
             updated_at=updated_at,
+            state_version=self.state_version + 1,
             guidance=guidance,
             human_review_reason=human_review_reason,
             workflow_stage=self.workflow_stage if workflow_stage is None else workflow_stage,

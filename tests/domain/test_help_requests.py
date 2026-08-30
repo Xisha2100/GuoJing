@@ -40,8 +40,10 @@ def test_result_moves_forward_and_publishes_only_manual_guidance() -> None:
     receipt = service.accept(_request())
 
     assert receipt.processing_status is HelpRequestProcessingStatus.RECEIVED
+    assert service.get_result(receipt.request_id).state_version == 1
     processing = service.mark_processing(receipt.request_id)
     assert processing.processing_status is HelpRequestProcessingStatus.PROCESSING
+    assert processing.state_version == 2
 
     review = service.mark_needs_human_review(
         receipt.request_id,
@@ -49,6 +51,7 @@ def test_result_moves_forward_and_publishes_only_manual_guidance() -> None:
     )
     assert review.processing_status is HelpRequestProcessingStatus.NEEDS_HUMAN_REVIEW
     assert review.human_review_reason is not None
+    assert review.state_version == 3
 
     guidance = HelpRequestGuidance(
         title="先确认页面信息",
@@ -64,6 +67,7 @@ def test_result_moves_forward_and_publishes_only_manual_guidance() -> None:
     assert ready.processing_status is HelpRequestProcessingStatus.GUIDANCE_READY
     assert ready.guidance == guidance
     assert ready.human_review_reason is None
+    assert ready.state_version == 4
 
 
 def test_result_transitions_are_forward_only() -> None:

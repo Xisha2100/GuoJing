@@ -8,6 +8,7 @@ from uuid import UUID, uuid4
 import pytest
 
 from guojing.application.help_requests.dto import HelpRequestRequest
+from guojing.application.help_requests.ports import HelpRequestStateConflictError
 from guojing.application.help_requests.service import HelpRequestNotFound, HelpRequestService
 from guojing.domain.help_requests import (
     HelpRequestGuidance,
@@ -168,4 +169,29 @@ def test_tutorial_checkpoint_round_trips_through_sqlite(tmp_path: Path) -> None:
         node_id="chat_list",
         revision_number=1,
     )
+    database.dispose()
+
+
+def test_stale_worker_cannot_overwrite_a_newer_sql_result(tmp_path: Path) -> None:
+    now = datetime(2026, 8, 30, 8, 0, tzinfo=UTC)
+    database = _database(tmp_path)
+    repository = SqlAlchemyHelpRequestRepository(database)
+    service = HelpRequestService(clock=lambda: now, repository=repository)
+    receipt = service.accept(_request())
+    first_snapshot = repository.get(receipt.request_id, now)
+    second_snapshot = repository.get(receipt.request_id, now)
+
+    assert first_snapshot is not None
+    assert second_snapshot is not None
+    first_update = first_snapshot.transition(HelpRequestProcessingStatus.PROCESSING, now)
+    repository.save(first_update, first_snapshot.state_version, now)
+
+    stale_update = second_snapshot.transition(HelpRequestProcessingStatus.PROCESSING, now)
+    with pytest.raises(HelpRequestStateConflictError, match="another worker"):
+        repository.save(stale_update, second_snapshot.state_version, now)
+
+    stored = repository.get(receipt.request_id, now)
+    assert stored is not None
+    assert stored.processing_status is HelpRequestProcessingStatus.PROCESSING
+    assert stored.state_version == 2
     database.dispose()

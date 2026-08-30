@@ -11,6 +11,10 @@ class ClientRequestConflictError(ValueError):
     """Raised when one idempotency key is reused with different request data."""
 
 
+class HelpRequestStateConflictError(ValueError):
+    """Raised when another worker has already changed a help-request result."""
+
+
 class HelpRequestRepository(Protocol):
     """Store only bounded result metadata, never the submitted image bytes."""
 
@@ -33,5 +37,10 @@ class HelpRequestRepository(Protocol):
     ) -> tuple[HelpRequestResult, ...]:
         """List non-expired results, newest first."""
 
-    def save(self, result: HelpRequestResult, now: datetime) -> None:
-        """Persist one state transition."""
+    def save(
+        self,
+        result: HelpRequestResult,
+        expected_version: int,
+        now: datetime,
+    ) -> None:
+        """Persist one transition only when the stored version still matches."""
