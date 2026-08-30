@@ -535,7 +535,7 @@ POST /api/v1/admin/help-requests/{request_id}/process
 
 ## 下一步
 
-模块 31 已将自动指引收紧为审核 action ID 的解析，并按动作风险等级授权。接下来实现 Android 端 Evidence Envelope 的真实发送链路；模型输出仍不能直接连到 Android 操作执行。
+模块 32 已提供 Android 的 Evidence Envelope 和 HTTP 发送器：仅明确允许联网的脱敏结构锚点可被序列化。接下来会为每个求助引入 capability，限制证据上传和状态读取的归属。
 
 ## License
 
