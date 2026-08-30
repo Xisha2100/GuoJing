@@ -332,7 +332,7 @@ cd android
 ### 16：截图求助处理结果契约
 
 - 定义 `received`、`processing`、`needs_human_review` 和 `guidance_ready` 四个受限处理状态，状态只能向前迁移。
-- 新增状态查询接口；服务端只暂存有限的请求元数据，不保存截图，重启后结果会失效。
+- 新增状态查询接口；服务端只暂存有限的请求元数据，不保存截图。模块 16 的内存原型重启后会失效，模块 21 起由 SQLite Repository 跨进程保存。
 - 基础指引只允许返回需要用户亲自完成的说明步骤，不携带坐标、手势、Accessibility 操作或支付命令。
 - Android 提供严格 JSON parser 和“刷新处理状态”入口，未知状态或不安全的 guidance 形状会 fail closed。
 
@@ -411,10 +411,19 @@ cd android
 
 - 定义最小 `GuidanceModel` 端口，模型只接触图片已丢弃后的元数据。
 - 严格解析人工说明 JSON，拒绝未知字段、自动操作步骤和金融/不可逆危险词。
-- 模型异常、超时或输出不合规时统一转人工复核；教程请求不能绕过证据匹配。
+- 已抛出的模型异常或输出不合规时统一转人工复核；真实模型接入前仍需实现独立 deadline/lease，教程请求不能绕过证据匹配。
 - 当前不绑定模型 SDK，未来可将 LangGraph/Deep Agent、Qwen 或 OpenAI-compatible 客户端包在适配器之后。
 
 学习文档：[docs/learning/25-model-adapter-safety.md](docs/learning/25-model-adapter-safety.md)
+
+### 27：生产求助工作流入口与可轮询检查点
+
+- `main.py` composition root 统一装配求助服务、证据服务、教程匹配器和基础指引处理器，管理员处理入口不再绕过模块 23–25。
+- `POST /api/v1/admin/help-requests/{request_id}/process` 会执行一次有边界的工作流；通用指引进入 `completed`，教程强匹配进入 `tutorial_matched` 并暂停人工确认。
+- 工作流阶段、匹配状态、graph/node/revision 安全摘要持久化到求助结果，客户端可通过原 status endpoint 轮询，服务重启后仍能读取。
+- Android 状态解析器识别新阶段和候选元数据，对未知值或阶段/处理状态矛盾的响应 fail closed；不显示截图、OCR 原文或节点树。
+
+学习文档：[docs/learning/27-production-help-workflow-entry.md](docs/learning/27-production-help-workflow-entry.md)
 
 ### 评审修复（模块 10–20 安全收口）
 
@@ -470,6 +479,17 @@ GET /api/v1/tutorials
 GET /api/v1/tutorials/{graph_id}
 ```
 
+求助工作流接口：
+
+```http
+POST /api/v1/help-requests
+POST /api/v1/help-requests/{request_id}/evidence
+GET  /api/v1/help-requests/{request_id}
+POST /api/v1/admin/help-requests/{request_id}/process
+```
+
+管理员处理接口需要登录会话和 CSRF 请求头。状态响应中的 `workflow_stage` 与 `tutorial_match` 只包含安全的阶段和教程标识；它们不是自动点击或支付授权。
+
 ## 隐私与安全原则
 
 - 用户始终亲自点击，老牌子不自动操作第三方 APP。
@@ -491,7 +511,7 @@ GET /api/v1/tutorials/{graph_id}
 
 ## 下一步
 
-模块 21–25 及中期 review 修复已完成。下一阶段建议先做一次端到端联调和产品验收，再决定具体模型供应商、真实 Agent SDK 与部署环境；在此之前不应把模型输出直接连到 Android 操作执行。
+模块 27 已把模块 21–25 的主要组件接入生产 composition root，并验证了“提交求助 → 上传证据 → 管理员运行 → 重启后轮询”的后端链路。下一阶段优先补齐中期 review 中尚未解决的生产硬化：服务端证据时间窗口与归属、Repository compare-and-swap、模型最小任务上下文与真实超时、基于风险/transition allowlist 的危险操作防线，以及 Android 证据发送用例。完成这些边界后，再选择具体模型供应商和 Deep Agent SDK；模型输出仍不能直接连到 Android 操作执行。
 
 ## License
 

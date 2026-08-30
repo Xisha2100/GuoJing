@@ -35,6 +35,38 @@ class HelpRequestResultTest {
     }
 
     @Test
+    fun status_reader_parses_a_persisted_tutorial_match_checkpoint() = runTest {
+        val reader = HttpHelpRequestStatusReader(
+            client = HttpJsonClient("http://localhost") {
+                FakeHttpURLConnection(TUTORIAL_MATCHED_RESULT)
+            },
+        )
+
+        val result = reader.fetch("11111111-1111-4111-8111-111111111111")
+
+        assertEquals(HelpRequestWorkflowStage.TUTORIAL_MATCHED, result.workflowStage)
+        assertEquals("matched", result.tutorialMatch?.status)
+        assertEquals("wechat_open_family_chat", result.tutorialMatch?.graphId)
+        assertEquals("chat_list", result.tutorialMatch?.nodeId)
+        assertEquals(1, result.tutorialMatch?.revisionNumber)
+    }
+
+    @Test
+    fun status_reader_rejects_an_unknown_workflow_stage() = runTest {
+        val reader = HttpHelpRequestStatusReader(
+            client = HttpJsonClient("http://localhost") {
+                FakeHttpURLConnection(TUTORIAL_MATCHED_RESULT.replace("tutorial_matched", "future"))
+            },
+        )
+
+        val error = runCatching {
+            reader.fetch("11111111-1111-4111-8111-111111111111")
+        }.exceptionOrNull()
+
+        assertTrue(error is HelpRequestFormatException)
+    }
+
+    @Test
     fun status_reader_rejects_unknown_processing_status() = runTest {
         val connection = FakeHttpURLConnection(GUIDANCE_RESULT.replace("guidance_ready", "future"))
         val reader = HttpHelpRequestStatusReader(
@@ -182,7 +214,33 @@ class HelpRequestResultTest {
                   "requires_manual_action": true
                 }]
               },
-              "human_review_reason": null
+              "human_review_reason": null,
+              "workflow_stage": "completed",
+              "tutorial_match": null
+            }
+            """.trimIndent()
+
+        val TUTORIAL_MATCHED_RESULT =
+            """
+            {
+              "schema_version": "1.1",
+              "request_id": "11111111-1111-4111-8111-111111111111",
+              "client_request_id": "22222222-2222-2222-2222-222222222222",
+              "intent": "recorded_tutorial",
+              "processing_route": "tutorial_match",
+              "processing_status": "needs_human_review",
+              "received_at": "2026-08-29T00:00:00Z",
+              "updated_at": "2026-08-29T00:01:00Z",
+              "guidance": null,
+              "human_review_reason": "教程页面已匹配,请人工确认版本和步骤后发布安全说明。",
+              "workflow_stage": "tutorial_matched",
+              "tutorial_match": {
+                "status": "matched",
+                "reason": "strong_match",
+                "graph_id": "wechat_open_family_chat",
+                "node_id": "chat_list",
+                "revision_number": 1
+              }
             }
             """.trimIndent()
     }

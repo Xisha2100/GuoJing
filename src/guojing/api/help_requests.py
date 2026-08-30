@@ -7,7 +7,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel, ConfigDict
 
-from guojing.api.dependencies import get_help_request_evidence_service
+from guojing.api.dependencies import get_help_request_evidence_service, get_help_request_workflow
 from guojing.application.help_requests.dto import HelpRequestRequest
 from guojing.application.help_requests.evidence_dto import HelpRequestEvidenceRequest
 from guojing.application.help_requests.evidence_service import (
@@ -20,6 +20,7 @@ from guojing.application.help_requests.service import (
     HelpRequestService,
     InvalidHelpRequestPayload,
 )
+from guojing.application.help_requests.workflow import HelpRequestWorkflow, HelpRequestWorkflowState
 from guojing.domain.evidence import EvidenceBounds, EvidenceEnvelope
 from guojing.domain.help_requests import (
     HelpRequestGuidance,
@@ -69,6 +70,41 @@ class HelpRequestGuidanceResponse(BaseModel):
         )
 
 
+class TutorialMatchResponse(BaseModel):
+    """Safe tutorial checkpoint metadata; never returns OCR or screenshot content."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: str
+    reason: str
+    graph_id: str | None = None
+    node_id: str | None = None
+    revision_number: int | None = None
+
+    @classmethod
+    def from_state(cls, state: HelpRequestWorkflowState) -> "TutorialMatchResponse | None":
+        decision = state.tutorial_decision
+        if decision is not None:
+            candidate = decision.candidate
+            return cls(
+                status=decision.status.value,
+                reason=decision.reason.value,
+                graph_id=candidate.graph_id if candidate is not None else None,
+                node_id=candidate.node_id if candidate is not None else None,
+                revision_number=candidate.revision_number if candidate is not None else None,
+            )
+        match = state.result.tutorial_match
+        if match is None:
+            return None
+        return cls(
+            status=match.status,
+            reason=match.reason,
+            graph_id=match.graph_id,
+            node_id=match.node_id,
+            revision_number=match.revision_number,
+        )
+
+
 class HelpRequestResultResponse(BaseModel):
     """Status projection that never contains the submitted screenshot."""
 
@@ -84,6 +120,8 @@ class HelpRequestResultResponse(BaseModel):
     updated_at: datetime
     guidance: HelpRequestGuidanceResponse | None = None
     human_review_reason: str | None = None
+    workflow_stage: str | None = None
+    tutorial_match: TutorialMatchResponse | None = None
 
     @classmethod
     def from_domain(cls, value: HelpRequestResult) -> "HelpRequestResultResponse":
@@ -101,7 +139,27 @@ class HelpRequestResultResponse(BaseModel):
                 else None
             ),
             human_review_reason=value.human_review_reason,
+            workflow_stage=value.workflow_stage,
+            tutorial_match=(
+                TutorialMatchResponse(
+                    status=value.tutorial_match.status,
+                    reason=value.tutorial_match.reason,
+                    graph_id=value.tutorial_match.graph_id,
+                    node_id=value.tutorial_match.node_id,
+                    revision_number=value.tutorial_match.revision_number,
+                )
+                if value.tutorial_match is not None
+                else None
+            ),
         )
+
+    @classmethod
+    def from_workflow_state(cls, state: HelpRequestWorkflowState) -> "HelpRequestResultResponse":
+        result = cls.from_domain(state.result)
+        payload = result.model_dump()
+        payload["workflow_stage"] = state.stage.value
+        payload["tutorial_match"] = TutorialMatchResponse.from_state(state)
+        return cls(**payload)
 
 
 class HelpRequestResponse(HelpRequestResultResponse):
@@ -127,6 +185,7 @@ class HelpRequestResponse(HelpRequestResultResponse):
             processing_status=value.processing_status,
             received_at=value.received_at,
             updated_at=value.received_at,
+            workflow_stage="received",
             image_disposition="discarded_after_validation",
             status_endpoint=status_endpoint,
         )
@@ -141,6 +200,10 @@ HelpRequestServiceDependency = Annotated[HelpRequestService, Depends(_service)]
 HelpRequestEvidenceServiceDependency = Annotated[
     HelpRequestEvidenceService,
     Depends(get_help_request_evidence_service),
+]
+HelpRequestWorkflowDependency = Annotated[
+    HelpRequestWorkflow,
+    Depends(get_help_request_workflow),
 ]
 
 
@@ -299,13 +362,13 @@ def get_latest_help_request_evidence(
 def get_help_request_result(
     request_id: UUID,
     response: Response,
-    service: HelpRequestServiceDependency,
+    workflow: HelpRequestWorkflowDependency,
 ) -> HelpRequestResultResponse:
     """Return status metadata without reopening or retaining the image."""
     response.headers["Cache-Control"] = "no-store"
     response.headers["Pragma"] = "no-cache"
     try:
-        return HelpRequestResultResponse.from_domain(service.get_result(request_id))
+        return HelpRequestResultResponse.from_workflow_state(workflow.inspect(request_id))
     except HelpRequestNotFound as error:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

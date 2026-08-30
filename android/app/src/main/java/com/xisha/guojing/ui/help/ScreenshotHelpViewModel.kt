@@ -284,6 +284,8 @@ class ScreenshotHelpViewModel(
                     ?: return@launch
                 mutableUiState.value = current.copy(
                     processingStatus = result.processingStatus,
+                    workflowStage = result.workflowStage,
+                    tutorialMatch = result.tutorialMatch,
                     guidance = result.guidance,
                     humanReviewReason = result.humanReviewReason,
                     isRefreshingStatus = false,

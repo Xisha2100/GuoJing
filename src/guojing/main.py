@@ -11,9 +11,12 @@ from guojing.api.error_handlers import handle_request_validation_error
 from guojing.api.middleware import HelpRequestSecurityMiddleware
 from guojing.api.router import api_router
 from guojing.application.auth.service import AdminAuthService
+from guojing.application.help_requests.basic_guidance import DeterministicHelpRequestProcessor
 from guojing.application.help_requests.evidence_service import HelpRequestEvidenceService
 from guojing.application.help_requests.service import HelpRequestService
+from guojing.application.help_requests.workflow import HelpRequestWorkflow
 from guojing.application.tutorial_drafts.service import TutorialDraftService
+from guojing.application.tutorials.matcher import TutorialMatchService
 from guojing.application.tutorials.service import TutorialService
 from guojing.core.config import Settings
 from guojing.infrastructure.persistence.admin_auth_repository import (
@@ -42,6 +45,7 @@ def create_app(
     admin_auth_service: AdminAuthService | None = None,
     help_request_service: HelpRequestService | None = None,
     help_request_evidence_service: HelpRequestEvidenceService | None = None,
+    help_request_workflow: HelpRequestWorkflow | None = None,
 ) -> FastAPI:
     """Build an isolated application instance for production or tests."""
     app_settings = settings or Settings()
@@ -81,6 +85,16 @@ def create_app(
             help_request_service,
             SqlAlchemyHelpRequestEvidenceRepository(database),
         )
+    if help_request_workflow is None:
+        assert tutorial_service is not None
+        assert help_request_service is not None
+        assert help_request_evidence_service is not None
+        help_request_workflow = HelpRequestWorkflow(
+            help_request_service=help_request_service,
+            evidence_service=help_request_evidence_service,
+            tutorial_match_service=TutorialMatchService(tutorial_service),
+            general_guidance_processor=DeterministicHelpRequestProcessor(),
+        )
 
     @asynccontextmanager
     async def lifespan(_application: FastAPI) -> AsyncIterator[None]:
@@ -104,6 +118,7 @@ def create_app(
     application.state.admin_auth_service = admin_auth_service
     application.state.help_request_service = help_request_service
     application.state.help_request_evidence_service = help_request_evidence_service
+    application.state.help_request_workflow = help_request_workflow
     application.include_router(api_router)
     return application
 

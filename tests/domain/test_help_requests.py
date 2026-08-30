@@ -14,6 +14,7 @@ from guojing.domain.help_requests import (
     HelpRequestGuidanceStep,
     HelpRequestProcessingStatus,
     HelpRequestResult,
+    HelpRequestTutorialMatch,
 )
 
 
@@ -106,6 +107,11 @@ def test_guidance_rejects_financial_and_irreversible_instructions() -> None:
             title="下一步",
             instruction="请点击支付并输入密码。",
         )
+
+
+def test_tutorial_match_requires_a_candidate_for_strong_match() -> None:
+    with pytest.raises(ValueError, match="must include a candidate"):
+        HelpRequestTutorialMatch(status="matched", reason="strong_match")
 
 
 def test_guidance_rejects_unsafe_title_and_spaced_synonym() -> None:

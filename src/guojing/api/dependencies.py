@@ -11,6 +11,7 @@ from guojing.application.auth.ports import (
 from guojing.application.auth.service import AdminAuthService
 from guojing.application.help_requests.evidence_service import HelpRequestEvidenceService
 from guojing.application.help_requests.service import HelpRequestService
+from guojing.application.help_requests.workflow import HelpRequestWorkflow
 from guojing.application.tutorial_drafts.service import TutorialDraftService
 from guojing.application.tutorials.service import TutorialService
 from guojing.core.security import ADMIN_CSRF_COOKIE, ADMIN_CSRF_HEADER, ADMIN_SESSION_COOKIE
@@ -32,6 +33,11 @@ def get_tutorial_service(request: Request) -> TutorialService:
 def get_help_request_service(request: Request) -> HelpRequestService:
     """Return the transient help-request service installed at startup."""
     return cast(HelpRequestService, request.app.state.help_request_service)
+
+
+def get_help_request_workflow(request: Request) -> HelpRequestWorkflow:
+    """Return the production help-request workflow composition."""
+    return cast(HelpRequestWorkflow, request.app.state.help_request_workflow)
 
 
 def get_help_request_evidence_service(request: Request) -> HelpRequestEvidenceService:

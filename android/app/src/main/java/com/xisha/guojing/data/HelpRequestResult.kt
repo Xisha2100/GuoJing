@@ -4,6 +4,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonPrimitive
 
 enum class HelpRequestProcessingStatus(val wireValue: String) {
@@ -22,6 +23,23 @@ enum class HelpRequestProcessingStatus(val wireValue: String) {
     }
 }
 
+enum class HelpRequestWorkflowStage(val wireValue: String) {
+    RECEIVED("received"),
+    AWAITING_EVIDENCE("awaiting_evidence"),
+    TUTORIAL_MATCHED("tutorial_matched"),
+    NEEDS_HUMAN_REVIEW("needs_human_review"),
+    COMPLETED("completed"),
+    ;
+
+    companion object {
+        fun fromWire(value: String): HelpRequestWorkflowStage =
+            entries.firstOrNull { it.wireValue == value }
+                ?: throw HelpRequestFormatException(
+                    "Unknown help request workflow stage '$value'",
+                )
+    }
+}
+
 data class HelpRequestGuidanceStep(
     val stepId: String,
     val title: String,
@@ -31,6 +49,14 @@ data class HelpRequestGuidanceStep(
 data class HelpRequestGuidance(
     val title: String,
     val steps: List<HelpRequestGuidanceStep>,
+)
+
+data class HelpRequestTutorialMatch(
+    val status: String,
+    val reason: String,
+    val graphId: String? = null,
+    val nodeId: String? = null,
+    val revisionNumber: Int? = null,
 )
 
 data class HelpRequestResult(
@@ -43,6 +69,8 @@ data class HelpRequestResult(
     val updatedAt: String,
     val guidance: HelpRequestGuidance? = null,
     val humanReviewReason: String? = null,
+    val workflowStage: HelpRequestWorkflowStage? = null,
+    val tutorialMatch: HelpRequestTutorialMatch? = null,
 )
 
 fun interface HelpRequestStatusReader {
@@ -87,6 +115,10 @@ class HttpHelpRequestStatusReader internal constructor(
         )
         val guidance = root.optionalGuidance(json)
         val humanReviewReason = root.optionalString("human_review_reason")
+        val workflowStage = root.optionalString("workflow_stage")?.let(
+            HelpRequestWorkflowStage::fromWire,
+        )
+        val tutorialMatch = root.optionalTutorialMatch()
         if (processingStatus == HelpRequestProcessingStatus.GUIDANCE_READY && guidance == null) {
             throw HelpRequestFormatException(
                 "guidance_ready results must include guidance",
@@ -111,6 +143,7 @@ class HttpHelpRequestStatusReader internal constructor(
                 "a review reason is only allowed during human review",
             )
         }
+        validateWorkflowProjection(processingStatus, workflowStage, tutorialMatch)
         val intent = HelpRequestIntent.fromWire(root.requiredString("intent"))
         val processingRoute = root.requiredString("processing_route")
         val expectedRoute = when (intent) {
@@ -130,6 +163,8 @@ class HttpHelpRequestStatusReader internal constructor(
             updatedAt = root.requiredString("updated_at"),
             guidance = guidance,
             humanReviewReason = humanReviewReason,
+            workflowStage = workflowStage,
+            tutorialMatch = tutorialMatch,
         )
     } catch (error: HelpRequestFormatException) {
         throw error
@@ -168,10 +203,86 @@ class HttpHelpRequestStatusReader internal constructor(
         )
     }
 
+    private fun JsonObject.optionalTutorialMatch(): HelpRequestTutorialMatch? {
+        val value = this["tutorial_match"]
+        if (value == null || value is JsonNull) return null
+        val match = value as? JsonObject
+            ?: throw HelpRequestFormatException("Help request tutorial_match must be an object")
+        val graphId = match.optionalString("graph_id")
+        val nodeId = match.optionalString("node_id")
+        val revisionNumber = match.optionalInt("revision_number")
+        if ((graphId == null) != (nodeId == null) ||
+            (graphId == null) != (revisionNumber == null)
+        ) {
+            throw HelpRequestFormatException("Help request tutorial_match candidate is incomplete")
+        }
+        val status = match.requiredString("status")
+        if (status == "matched" && graphId == null) {
+            throw HelpRequestFormatException("matched tutorial result has no candidate")
+        }
+        return HelpRequestTutorialMatch(
+            status = status,
+            reason = match.requiredString("reason"),
+            graphId = graphId,
+            nodeId = nodeId,
+            revisionNumber = revisionNumber,
+        )
+    }
+
+    private fun validateWorkflowProjection(
+        processingStatus: HelpRequestProcessingStatus,
+        workflowStage: HelpRequestWorkflowStage?,
+        tutorialMatch: HelpRequestTutorialMatch?,
+    ) {
+        when (workflowStage) {
+            null -> return
+            HelpRequestWorkflowStage.RECEIVED -> {
+                if (processingStatus != HelpRequestProcessingStatus.RECEIVED) {
+                    throw HelpRequestFormatException("received workflow stage has an invalid status")
+                }
+            }
+            HelpRequestWorkflowStage.AWAITING_EVIDENCE -> {
+                if (processingStatus != HelpRequestProcessingStatus.PROCESSING) {
+                    throw HelpRequestFormatException(
+                        "awaiting_evidence workflow stage has an invalid status",
+                    )
+                }
+            }
+            HelpRequestWorkflowStage.TUTORIAL_MATCHED -> {
+                if (processingStatus != HelpRequestProcessingStatus.NEEDS_HUMAN_REVIEW ||
+                    tutorialMatch?.status != "matched"
+                ) {
+                    throw HelpRequestFormatException(
+                        "tutorial_matched workflow stage has an invalid projection",
+                    )
+                }
+            }
+            HelpRequestWorkflowStage.NEEDS_HUMAN_REVIEW -> {
+                if (processingStatus != HelpRequestProcessingStatus.NEEDS_HUMAN_REVIEW) {
+                    throw HelpRequestFormatException(
+                        "needs_human_review workflow stage has an invalid status",
+                    )
+                }
+            }
+            HelpRequestWorkflowStage.COMPLETED -> {
+                if (processingStatus != HelpRequestProcessingStatus.GUIDANCE_READY) {
+                    throw HelpRequestFormatException("completed workflow stage has an invalid status")
+                }
+            }
+        }
+    }
+
     private fun JsonObject.optionalString(name: String): String? {
         val value = this[name]
         if (value == null || value is JsonNull) return null
         return value.jsonPrimitive.content.takeIf { it.isNotBlank() }
+    }
+
+    private fun JsonObject.optionalInt(name: String): Int? {
+        val value = this[name]
+        if (value == null || value is JsonNull) return null
+        return value.jsonPrimitive.intOrNull
+            ?: throw HelpRequestFormatException("Help request tutorial_match '$name' must be an integer")
     }
 
     private fun JsonObject.requiredString(name: String): String {

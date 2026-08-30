@@ -33,6 +33,17 @@ def test_migration_builds_and_removes_the_schema(
         "help_request_results",
         "help_request_evidence",
     } <= tables
+    result_columns = {
+        column["name"] for column in inspect(engine).get_columns("help_request_results")
+    }
+    assert {
+        "workflow_stage",
+        "tutorial_match_status",
+        "tutorial_match_reason",
+        "tutorial_graph_id",
+        "tutorial_node_id",
+        "tutorial_revision_number",
+    } <= result_columns
     with engine.connect() as connection:
         assert connection.exec_driver_sql("PRAGMA journal_mode").scalar_one() == "wal"
 

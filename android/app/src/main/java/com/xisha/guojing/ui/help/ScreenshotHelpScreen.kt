@@ -57,6 +57,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.xisha.guojing.data.HelpRequestIntent
 import com.xisha.guojing.data.HelpRequestProcessingStatus
+import com.xisha.guojing.data.HelpRequestWorkflowStage
 import com.xisha.guojing.privacy.InMemoryScreenshot
 import com.xisha.guojing.privacy.NormalizedRedaction
 import com.xisha.guojing.privacy.OcrPrivacySuggestion
@@ -558,6 +559,27 @@ private fun SubmittedContent(
         title = "当前处理状态",
         body = processingStatusLabel(state.processingStatus),
     )
+    state.workflowStage?.let { stage ->
+        InfoCard(
+            title = "工作流阶段",
+            body = workflowStageLabel(stage),
+        )
+    }
+    state.tutorialMatch?.let { match ->
+        val candidate = listOfNotNull(
+            match.graphId?.let { "教程 $it" },
+            match.nodeId?.let { "页面 $it" },
+            match.revisionNumber?.let { "修订 $it" },
+        ).joinToString("，")
+        InfoCard(
+            title = "教程匹配结果",
+            body = if (candidate.isEmpty()) {
+                "${match.status}：${match.reason}"
+            } else {
+                "${match.status}：${match.reason}。$candidate"
+            },
+        )
+    }
     state.humanReviewReason?.let { reason ->
         InfoCard(
             title = "需要人工复核的原因",
@@ -608,6 +630,14 @@ private fun processingStatusLabel(status: HelpRequestProcessingStatus): String =
     HelpRequestProcessingStatus.PROCESSING -> "正在处理，暂时不会自动操作手机。"
     HelpRequestProcessingStatus.NEEDS_HUMAN_REVIEW -> "需要人工复核，已暂停自动生成指引。"
     HelpRequestProcessingStatus.GUIDANCE_READY -> "基础指引已生成，请逐步阅读并亲自操作。"
+}
+
+private fun workflowStageLabel(stage: HelpRequestWorkflowStage): String = when (stage) {
+    HelpRequestWorkflowStage.RECEIVED -> "已接收，等待开始处理。"
+    HelpRequestWorkflowStage.AWAITING_EVIDENCE -> "等待当前页面的安全证据。"
+    HelpRequestWorkflowStage.TUTORIAL_MATCHED -> "已匹配教程，等待人工确认说明。"
+    HelpRequestWorkflowStage.NEEDS_HUMAN_REVIEW -> "已暂停，等待人工复核。"
+    HelpRequestWorkflowStage.COMPLETED -> "已完成，可查看人工指引。"
 }
 
 @Composable

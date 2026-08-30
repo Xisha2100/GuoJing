@@ -5,8 +5,6 @@ from hashlib import sha256
 from typing import NoReturn
 from uuid import UUID, uuid4
 
-import pytest
-
 from guojing.application.help_requests.basic_guidance import DeterministicHelpRequestProcessor
 from guojing.application.help_requests.dto import HelpRequestRequest
 from guojing.application.help_requests.evidence_service import HelpRequestEvidenceService
@@ -159,6 +157,7 @@ def test_tutorial_request_waits_for_evidence_then_selects_tutorial() -> None:
     matched = workflow.run(receipt.request_id)
 
     assert matched.stage is HelpRequestWorkflowStage.TUTORIAL_MATCHED
+    assert matched.result.processing_status.value == "needs_human_review"
     assert matched.tutorial_decision is not None
     assert matched.tutorial_decision.candidate is not None
     assert matched.tutorial_decision.candidate.node_id == "chat_list"
@@ -187,11 +186,13 @@ def test_general_guidance_completes_through_processor() -> None:
     assert state.result.guidance is not None
 
 
-def test_workflow_does_not_restart_terminal_request() -> None:
+def test_workflow_replays_terminal_request_without_restarting_it() -> None:
     help_service = HelpRequestService()
     receipt = help_service.accept(_request("general_guidance"))
     workflow, _ = _workflow(help_service)
     workflow.run(receipt.request_id)
 
-    with pytest.raises(ValueError, match="cannot resume"):
-        workflow.run(receipt.request_id)
+    replayed = workflow.run(receipt.request_id)
+
+    assert replayed.stage is HelpRequestWorkflowStage.COMPLETED
+    assert replayed.result.guidance is not None

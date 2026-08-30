@@ -11,6 +11,9 @@ MAX_SCREENSHOT_DIMENSION = 1_440
 MAX_SCREENSHOT_BYTES = 8 * 1024 * 1024
 MAX_QUESTION_LENGTH = 300
 MAX_REDACTIONS = 20
+MAX_WORKFLOW_STAGE_LENGTH = 40
+MAX_TUTORIAL_MATCH_REASON_LENGTH = 80
+MAX_TUTORIAL_ID_LENGTH = 120
 
 
 class HelpRequestIntent(StrEnum):
@@ -34,6 +37,35 @@ class HelpRequestProcessingStatus(StrEnum):
     PROCESSING = "processing"
     NEEDS_HUMAN_REVIEW = "needs_human_review"
     GUIDANCE_READY = "guidance_ready"
+
+
+@dataclass(frozen=True, slots=True)
+class HelpRequestTutorialMatch:
+    """Safe tutorial selection metadata retained for polling and review."""
+
+    status: str
+    reason: str
+    graph_id: str | None = None
+    node_id: str | None = None
+    revision_number: int | None = None
+
+    def __post_init__(self) -> None:
+        if not self.status.strip() or len(self.status) > MAX_WORKFLOW_STAGE_LENGTH:
+            raise ValueError("tutorial match status must contain 1 to 40 characters")
+        if not self.reason.strip() or len(self.reason) > MAX_TUTORIAL_MATCH_REASON_LENGTH:
+            raise ValueError("tutorial match reason must contain 1 to 80 characters")
+        for value, field_name in (
+            (self.graph_id, "tutorial graph_id"),
+            (self.node_id, "tutorial node_id"),
+        ):
+            if value is not None and (not value.strip() or len(value) > MAX_TUTORIAL_ID_LENGTH):
+                raise ValueError(f"{field_name} must contain 1 to 120 characters")
+        if self.revision_number is not None and self.revision_number < 1:
+            raise ValueError("tutorial revision_number must be positive")
+        if self.status == "matched" and (
+            self.graph_id is None or self.node_id is None or self.revision_number is None
+        ):
+            raise ValueError("matched tutorial metadata must include a candidate")
 
 
 _UNSAFE_GUIDANCE_TERMS = (
@@ -138,10 +170,16 @@ class HelpRequestResult:
     updated_at: datetime
     guidance: HelpRequestGuidance | None = None
     human_review_reason: str | None = None
+    workflow_stage: str | None = None
+    tutorial_match: HelpRequestTutorialMatch | None = None
 
     def __post_init__(self) -> None:
         if self.updated_at < self.received_at:
             raise ValueError("updated_at cannot be earlier than received_at")
+        if self.workflow_stage is not None and (
+            not self.workflow_stage.strip() or len(self.workflow_stage) > MAX_WORKFLOW_STAGE_LENGTH
+        ):
+            raise ValueError("workflow_stage must contain 1 to 40 characters")
         if self.processing_status is HelpRequestProcessingStatus.GUIDANCE_READY:
             if self.guidance is None:
                 raise ValueError("guidance_ready results must include guidance")
@@ -162,6 +200,8 @@ class HelpRequestResult:
         *,
         guidance: HelpRequestGuidance | None = None,
         human_review_reason: str | None = None,
+        workflow_stage: str | None = None,
+        tutorial_match: HelpRequestTutorialMatch | None = None,
     ) -> "HelpRequestResult":
         """Apply one allowed forward-only transition."""
         if updated_at < self.updated_at:
@@ -193,6 +233,8 @@ class HelpRequestResult:
             updated_at=updated_at,
             guidance=guidance,
             human_review_reason=human_review_reason,
+            workflow_stage=self.workflow_stage if workflow_stage is None else workflow_stage,
+            tutorial_match=self.tutorial_match if tutorial_match is None else tutorial_match,
         )
 
     def matches_request(self, request_id: UUID, client_request_id: UUID) -> bool:

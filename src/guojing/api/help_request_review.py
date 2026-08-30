@@ -10,13 +10,17 @@ from pydantic import BaseModel, ConfigDict, Field
 from guojing.api.dependencies import (
     get_admin_auth_service,
     get_help_request_service,
+    get_help_request_workflow,
     require_admin,
     require_admin_session,
 )
 from guojing.api.help_requests import HelpRequestResultResponse
 from guojing.application.auth.service import AdminAuthService
-from guojing.application.help_requests.basic_guidance import DeterministicHelpRequestProcessor
 from guojing.application.help_requests.service import HelpRequestNotFound, HelpRequestService
+from guojing.application.help_requests.workflow import (
+    HelpRequestWorkflow,
+    HelpRequestWorkflowStage,
+)
 from guojing.domain.auth import AuthenticatedAdminSession
 from guojing.domain.help_requests import (
     HelpRequestGuidance,
@@ -34,6 +38,10 @@ AdminSessionDependency = Annotated[
 HelpRequestServiceDependency = Annotated[
     HelpRequestService,
     Depends(get_help_request_service),
+]
+HelpRequestWorkflowDependency = Annotated[
+    HelpRequestWorkflow,
+    Depends(get_help_request_workflow),
 ]
 AuthServiceDependency = Annotated[AdminAuthService, Depends(get_admin_auth_service)]
 
@@ -108,10 +116,10 @@ def list_help_request_reviews(
 def process_help_request(
     request_id: UUID,
     _admin: AdminMutationDependency,
-    service: HelpRequestServiceDependency,
     auth_service: AuthServiceDependency,
+    workflow: HelpRequestWorkflowDependency,
 ) -> HelpRequestResultResponse:
-    """Run the no-model processor through the same authenticated admin boundary."""
+    """Run the production workflow through the authenticated admin boundary."""
     # Help-request state and the admin audit repository do not yet share a
     # database transaction.  Write the durable operator intent first so an
     # audit outage cannot leave a successful-looking state transition with no
@@ -128,7 +136,7 @@ def process_help_request(
         },
     )
     try:
-        result = service.process(request_id, DeterministicHelpRequestProcessor())
+        state = workflow.run(request_id)
     except HelpRequestNotFound as error:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -136,7 +144,7 @@ def process_help_request(
         ) from error
     except ValueError as error:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
-    return HelpRequestResultResponse.from_domain(result)
+    return HelpRequestResultResponse.from_workflow_state(state)
 
 
 @router.post(
@@ -173,7 +181,11 @@ def publish_reviewed_guidance(
         },
     )
     try:
-        result = service.publish_guidance(request_id, domain_guidance)
+        result = service.publish_guidance(
+            request_id,
+            domain_guidance,
+            workflow_stage=HelpRequestWorkflowStage.COMPLETED.value,
+        )
     except HelpRequestNotFound as error:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

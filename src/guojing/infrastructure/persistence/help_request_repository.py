@@ -16,6 +16,7 @@ from guojing.domain.help_requests import (
     HelpRequestProcessingRoute,
     HelpRequestProcessingStatus,
     HelpRequestResult,
+    HelpRequestTutorialMatch,
 )
 from guojing.infrastructure.persistence.database import Database
 from guojing.infrastructure.persistence.models import HelpRequestResultRecord
@@ -94,6 +95,22 @@ class SqlAlchemyHelpRequestRepository:
             record.updated_at = result.updated_at
             record.guidance_json = _serialize_guidance(result.guidance)
             record.human_review_reason = result.human_review_reason
+            record.workflow_stage = result.workflow_stage
+            record.tutorial_match_status = (
+                result.tutorial_match.status if result.tutorial_match is not None else None
+            )
+            record.tutorial_match_reason = (
+                result.tutorial_match.reason if result.tutorial_match is not None else None
+            )
+            record.tutorial_graph_id = (
+                result.tutorial_match.graph_id if result.tutorial_match is not None else None
+            )
+            record.tutorial_node_id = (
+                result.tutorial_match.node_id if result.tutorial_match is not None else None
+            )
+            record.tutorial_revision_number = (
+                result.tutorial_match.revision_number if result.tutorial_match is not None else None
+            )
 
     def _get_by_client_request_id(
         self,
@@ -127,11 +144,28 @@ def _to_record(
         expires_at=expires_at,
         guidance_json=_serialize_guidance(result.guidance),
         human_review_reason=result.human_review_reason,
+        workflow_stage=result.workflow_stage,
+        tutorial_match_status=(
+            result.tutorial_match.status if result.tutorial_match is not None else None
+        ),
+        tutorial_match_reason=(
+            result.tutorial_match.reason if result.tutorial_match is not None else None
+        ),
+        tutorial_graph_id=(
+            result.tutorial_match.graph_id if result.tutorial_match is not None else None
+        ),
+        tutorial_node_id=(
+            result.tutorial_match.node_id if result.tutorial_match is not None else None
+        ),
+        tutorial_revision_number=(
+            result.tutorial_match.revision_number if result.tutorial_match is not None else None
+        ),
     )
 
 
 def _from_record(record: HelpRequestResultRecord) -> HelpRequestResult:
     guidance = _deserialize_guidance(record.guidance_json)
+    tutorial_match = _deserialize_tutorial_match(record)
     return HelpRequestResult(
         request_id=UUID(record.request_id),
         client_request_id=UUID(record.client_request_id),
@@ -142,6 +176,31 @@ def _from_record(record: HelpRequestResultRecord) -> HelpRequestResult:
         updated_at=as_utc(record.updated_at),
         guidance=guidance,
         human_review_reason=record.human_review_reason,
+        workflow_stage=record.workflow_stage,
+        tutorial_match=tutorial_match,
+    )
+
+
+def _deserialize_tutorial_match(
+    record: HelpRequestResultRecord,
+) -> HelpRequestTutorialMatch | None:
+    values = (
+        record.tutorial_match_status,
+        record.tutorial_match_reason,
+        record.tutorial_graph_id,
+        record.tutorial_node_id,
+        record.tutorial_revision_number,
+    )
+    if all(value is None for value in values):
+        return None
+    if record.tutorial_match_status is None or record.tutorial_match_reason is None:
+        raise ValueError("stored tutorial match checkpoint is incomplete")
+    return HelpRequestTutorialMatch(
+        status=record.tutorial_match_status,
+        reason=record.tutorial_match_reason,
+        graph_id=record.tutorial_graph_id,
+        node_id=record.tutorial_node_id,
+        revision_number=record.tutorial_revision_number,
     )
 
 

@@ -23,6 +23,7 @@ from guojing.domain.help_requests import (
     HelpRequestProcessingRoute,
     HelpRequestProcessingStatus,
     HelpRequestResult,
+    HelpRequestTutorialMatch,
     verify_sanitized_image,
 )
 
@@ -130,6 +131,8 @@ class HelpRequestService:
         self,
         request_id: UUID,
         processor: HelpRequestProcessor,
+        *,
+        workflow_stage: str | None = None,
     ) -> HelpRequestResult:
         """Run one metadata-only processor and apply its bounded outcome."""
         current = self.get_result(request_id)
@@ -144,41 +147,70 @@ class HelpRequestService:
             if outcome.status is HelpRequestProcessingStatus.NEEDS_HUMAN_REVIEW:
                 if outcome.review_reason is None:
                     raise ValueError("review outcome needs a reason")
-                return self.mark_needs_human_review(request_id, outcome.review_reason)
+                return self.mark_needs_human_review(
+                    request_id,
+                    outcome.review_reason,
+                    workflow_stage=workflow_stage,
+                )
             if outcome.status is HelpRequestProcessingStatus.GUIDANCE_READY:
                 if outcome.guidance is None:
                     raise ValueError("guidance outcome needs guidance")
-                return self.publish_guidance(request_id, outcome.guidance)
+                return self.publish_guidance(
+                    request_id,
+                    outcome.guidance,
+                    workflow_stage=workflow_stage,
+                )
             raise ValueError(f"processor returned unsupported terminal status {outcome.status}")
         except Exception:
-            return self.mark_needs_human_review(request_id, PROCESSOR_FAILURE_REVIEW_REASON)
+            return self.mark_needs_human_review(
+                request_id,
+                PROCESSOR_FAILURE_REVIEW_REASON,
+                workflow_stage=workflow_stage,
+            )
 
-    def mark_processing(self, request_id: UUID) -> HelpRequestResult:
+    def mark_processing(
+        self,
+        request_id: UUID,
+        *,
+        workflow_stage: str | None = None,
+    ) -> HelpRequestResult:
         """Move a received request into the worker-processing state."""
-        return self._transition(request_id, HelpRequestProcessingStatus.PROCESSING)
+        return self._transition(
+            request_id,
+            HelpRequestProcessingStatus.PROCESSING,
+            workflow_stage=workflow_stage,
+        )
 
     def mark_needs_human_review(
         self,
         request_id: UUID,
         reason: str,
+        *,
+        workflow_stage: str | None = None,
+        tutorial_match: HelpRequestTutorialMatch | None = None,
     ) -> HelpRequestResult:
         """Pause automation when deterministic safety review is required."""
         return self._transition(
             request_id,
             HelpRequestProcessingStatus.NEEDS_HUMAN_REVIEW,
             human_review_reason=reason,
+            workflow_stage=workflow_stage or "needs_human_review",
+            tutorial_match=tutorial_match,
         )
 
     def publish_guidance(
         self,
         request_id: UUID,
         guidance: HelpRequestGuidance,
+        *,
+        workflow_stage: str | None = None,
     ) -> HelpRequestResult:
         """Publish explanatory steps without creating executable actions."""
         return self._transition(
             request_id,
             HelpRequestProcessingStatus.GUIDANCE_READY,
             guidance=guidance,
+            workflow_stage=workflow_stage or "completed",
         )
 
     def _transition(
@@ -188,6 +220,8 @@ class HelpRequestService:
         *,
         guidance: HelpRequestGuidance | None = None,
         human_review_reason: str | None = None,
+        workflow_stage: str | None = None,
+        tutorial_match: HelpRequestTutorialMatch | None = None,
     ) -> HelpRequestResult:
         now = self._clock()
         result = self._repository.get(request_id, now)
@@ -198,6 +232,8 @@ class HelpRequestService:
             now,
             guidance=guidance,
             human_review_reason=human_review_reason,
+            workflow_stage=workflow_stage,
+            tutorial_match=tutorial_match,
         )
         self._repository.save(updated, now)
         return updated

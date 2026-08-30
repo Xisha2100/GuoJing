@@ -1,12 +1,15 @@
-"""Authenticated review endpoint tests for module 19."""
+"""Authenticated review endpoint tests for modules 19 and 27."""
 
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import cast
 from uuid import UUID
 
 import pytest
 from fastapi import FastAPI
+from fastapi.testclient import TestClient
 from tests.auth_helpers import admin_api_client, login_test_admin
+from tests.tutorial_factory import make_tutorial_graph
 
 from guojing.api.help_request_review import (
     GuidanceRequest,
@@ -15,9 +18,26 @@ from guojing.api.help_request_review import (
 )
 from guojing.application.auth.service import AdminAuthService
 from guojing.application.help_requests.dto import HelpRequestRequest
+from guojing.application.help_requests.evidence_service import HelpRequestEvidenceService
 from guojing.application.help_requests.service import HelpRequestService
+from guojing.application.help_requests.workflow import HelpRequestWorkflow
+from guojing.application.tutorial_drafts.service import TutorialDraftService
+from guojing.application.tutorials.dto import TutorialGraphDto
+from guojing.application.tutorials.service import TutorialService
+from guojing.core.config import AppEnvironment, Settings
 from guojing.domain.auth import AuthenticatedAdminSession
 from guojing.domain.help_requests import HelpRequestProcessingStatus
+from guojing.infrastructure.persistence.help_request_evidence_repository import (
+    SqlAlchemyHelpRequestEvidenceRepository,
+)
+from guojing.infrastructure.persistence.help_request_repository import (
+    SqlAlchemyHelpRequestRepository,
+)
+from guojing.infrastructure.persistence.tutorial_draft_repository import (
+    SqlAlchemyTutorialDraftRepository,
+)
+from guojing.infrastructure.persistence.tutorial_repository import SqlAlchemyTutorialRepository
+from guojing.main import create_app
 
 
 def _payload() -> dict[str, object]:
@@ -38,6 +58,28 @@ def _payload() -> dict[str, object]:
         "sanitized_sha256": sha256(image).hexdigest(),
         "send_consent": True,
         "sanitized_image_base64": base64.b64encode(image).decode("ascii"),
+    }
+
+
+def _evidence_payload() -> dict[str, object]:
+    captured_at = datetime.now(UTC)
+    return {
+        "schema_version": "1.0",
+        "evidence_id": "22222222-2222-4222-8222-222222222222",
+        "package_name": "com.tencent.mm",
+        "version_name": "8.0.60",
+        "version_code": 2_600,
+        "source": "accessibility",
+        "sharing_policy": "sanitized_network_allowed",
+        "structure_score": 1.0,
+        "captured_at": captured_at.isoformat(),
+        "expires_at": (captured_at + timedelta(minutes=10)).isoformat(),
+        "anchors": [
+            {
+                "anchor_id": "family_chat",
+                "confidence": 1.0,
+            },
+        ],
     }
 
 
@@ -128,6 +170,70 @@ def test_admin_can_run_the_no_model_processor_end_to_end(tmp_path: Path) -> None
     assert len(processed.json()["guidance"]["steps"]) == 3
 
 
+def test_tutorial_workflow_is_composed_and_checkpoint_survives_new_app(
+    tmp_path: Path,
+) -> None:
+    graph = make_tutorial_graph()
+    with admin_api_client(tmp_path) as (client, database, auth_service):
+        headers = login_test_admin(client)
+        draft = client.post(
+            "/api/v1/admin/tutorials/drafts",
+            headers=headers,
+            json=TutorialGraphDto.from_domain(graph).model_dump(mode="json"),
+        )
+        published = client.post(
+            f"/api/v1/admin/tutorials/{graph.graph_id}/revisions/1/publish",
+            headers=headers,
+        )
+        submitted = client.post("/api/v1/help-requests", json=_payload())
+        request_id = submitted.json()["request_id"]
+        evidence = client.post(
+            f"/api/v1/help-requests/{request_id}/evidence",
+            json=_evidence_payload(),
+        )
+        processed = client.post(
+            f"/api/v1/admin/help-requests/{request_id}/process",
+            headers=headers,
+        )
+
+        restarted_app = create_app(
+            Settings(environment=AppEnvironment.TEST, database_url="sqlite:///:memory:"),
+            tutorial_service=TutorialService(SqlAlchemyTutorialRepository(database)),
+            tutorial_draft_service=TutorialDraftService(
+                SqlAlchemyTutorialDraftRepository(database),
+            ),
+            admin_auth_service=auth_service,
+            help_request_service=HelpRequestService(
+                repository=SqlAlchemyHelpRequestRepository(database),
+            ),
+            help_request_evidence_service=HelpRequestEvidenceService(
+                HelpRequestService(repository=SqlAlchemyHelpRequestRepository(database)),
+                SqlAlchemyHelpRequestEvidenceRepository(database),
+            ),
+        )
+        with TestClient(restarted_app) as restarted_client:
+            polled = restarted_client.get(f"/api/v1/help-requests/{request_id}")
+
+    assert draft.status_code == 201
+    assert published.status_code == 200
+    assert submitted.status_code == 202
+    assert evidence.status_code == 202
+    assert processed.status_code == 200
+    assert processed.json()["processing_status"] == "needs_human_review"
+    assert processed.json()["workflow_stage"] == "tutorial_matched"
+    assert processed.json()["tutorial_match"] == {
+        "status": "matched",
+        "reason": "strong_match",
+        "graph_id": graph.graph_id,
+        "node_id": "chat_list",
+        "revision_number": 1,
+    }
+    assert polled.status_code == 200
+    assert polled.json()["workflow_stage"] == "tutorial_matched"
+    assert polled.json()["tutorial_match"] == processed.json()["tutorial_match"]
+    assert "sanitized_image_base64" not in polled.json()
+
+
 def test_audit_failure_does_not_publish_guidance() -> None:
     service = HelpRequestService()
     payload = _payload()
@@ -177,7 +283,7 @@ def test_audit_failure_does_not_start_processing() -> None:
         process_help_request(
             request_id=request.request_id,
             _admin=cast(AuthenticatedAdminSession, object()),
-            service=service,
+            workflow=cast(HelpRequestWorkflow, object()),
             auth_service=cast(AdminAuthService, FailingAuditService()),
         )
 

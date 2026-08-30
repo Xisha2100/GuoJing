@@ -173,6 +173,12 @@ class HelpRequestResultRecord(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     guidance_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     human_review_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    workflow_stage: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    tutorial_match_status: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    tutorial_match_reason: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    tutorial_graph_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    tutorial_node_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    tutorial_revision_number: Mapped[int | None] = mapped_column(nullable=True)
 
 
 class HelpRequestEvidenceRecord(Base):
