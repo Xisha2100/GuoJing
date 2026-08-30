@@ -181,6 +181,7 @@ class HelpRequestResultRecord(Base):
     tutorial_graph_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
     tutorial_node_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
     tutorial_revision_number: Mapped[int | None] = mapped_column(nullable=True)
+    tutorial_plan_json: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class HelpRequestEvidenceRecord(Base):

@@ -16,6 +16,7 @@ from guojing.application.help_requests.evidence_service import HelpRequestEviden
 from guojing.application.help_requests.service import HelpRequestService
 from guojing.application.help_requests.workflow import HelpRequestWorkflow
 from guojing.application.tutorial_drafts.service import TutorialDraftService
+from guojing.application.tutorials.execution_plan import TutorialExecutionPlanService
 from guojing.application.tutorials.matcher import TutorialMatchService
 from guojing.application.tutorials.service import TutorialService
 from guojing.core.config import Settings
@@ -103,6 +104,7 @@ def create_app(
             help_request_service=help_request_service,
             evidence_service=help_request_evidence_service,
             tutorial_match_service=TutorialMatchService(tutorial_service),
+            execution_plan_service=TutorialExecutionPlanService(tutorial_service),
             general_guidance_processor=DeterministicHelpRequestProcessor(),
         )
 

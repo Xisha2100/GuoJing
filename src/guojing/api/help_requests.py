@@ -29,6 +29,7 @@ from guojing.domain.help_requests import (
     HelpRequestProcessingRoute,
     HelpRequestProcessingStatus,
     HelpRequestResult,
+    HelpRequestTutorialPlan,
 )
 
 router = APIRouter(prefix="/api/v1/help-requests", tags=["screenshot help"])
@@ -105,6 +106,28 @@ class TutorialMatchResponse(BaseModel):
         )
 
 
+class TutorialPlanResponse(BaseModel):
+    """Pinned low-risk transitions; the Android client still performs every action."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    graph_id: str
+    node_id: str
+    revision_number: int
+    compatibility_status: str
+    allowed_transition_ids: list[str]
+
+    @classmethod
+    def from_domain(cls, value: HelpRequestTutorialPlan) -> "TutorialPlanResponse":
+        return cls(
+            graph_id=value.graph_id,
+            node_id=value.node_id,
+            revision_number=value.revision_number,
+            compatibility_status=value.compatibility_status,
+            allowed_transition_ids=list(value.allowed_transition_ids),
+        )
+
+
 class HelpRequestResultResponse(BaseModel):
     """Status projection that never contains the submitted screenshot."""
 
@@ -122,6 +145,7 @@ class HelpRequestResultResponse(BaseModel):
     human_review_reason: str | None = None
     workflow_stage: str | None = None
     tutorial_match: TutorialMatchResponse | None = None
+    tutorial_plan: TutorialPlanResponse | None = None
 
     @classmethod
     def from_domain(cls, value: HelpRequestResult) -> "HelpRequestResultResponse":
@@ -149,6 +173,11 @@ class HelpRequestResultResponse(BaseModel):
                     revision_number=value.tutorial_match.revision_number,
                 )
                 if value.tutorial_match is not None
+                else None
+            ),
+            tutorial_plan=(
+                TutorialPlanResponse.from_domain(value.tutorial_plan)
+                if value.tutorial_plan is not None
                 else None
             ),
         )

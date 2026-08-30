@@ -15,6 +15,7 @@ from guojing.domain.help_requests import (
     HelpRequestGuidanceStep,
     HelpRequestProcessingStatus,
     HelpRequestTutorialMatch,
+    HelpRequestTutorialPlan,
 )
 from guojing.infrastructure.persistence.database import Database
 from guojing.infrastructure.persistence.help_request_repository import (
@@ -154,6 +155,13 @@ def test_tutorial_checkpoint_round_trips_through_sqlite(tmp_path: Path) -> None:
             node_id="chat_list",
             revision_number=1,
         ),
+        tutorial_plan=HelpRequestTutorialPlan(
+            graph_id="wechat_open_family_chat",
+            node_id="chat_list",
+            revision_number=1,
+            compatibility_status="verified",
+            allowed_transition_ids=("open_family_chat",),
+        ),
     )
 
     result = HelpRequestService(
@@ -168,6 +176,13 @@ def test_tutorial_checkpoint_round_trips_through_sqlite(tmp_path: Path) -> None:
         graph_id="wechat_open_family_chat",
         node_id="chat_list",
         revision_number=1,
+    )
+    assert result.tutorial_plan == HelpRequestTutorialPlan(
+        graph_id="wechat_open_family_chat",
+        node_id="chat_list",
+        revision_number=1,
+        compatibility_status="verified",
+        allowed_transition_ids=("open_family_chat",),
     )
     database.dispose()
 

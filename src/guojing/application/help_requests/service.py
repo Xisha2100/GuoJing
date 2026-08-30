@@ -25,6 +25,7 @@ from guojing.domain.help_requests import (
     HelpRequestProcessingStatus,
     HelpRequestResult,
     HelpRequestTutorialMatch,
+    HelpRequestTutorialPlan,
     verify_sanitized_image,
 )
 
@@ -201,6 +202,7 @@ class HelpRequestService:
         *,
         workflow_stage: str | None = None,
         tutorial_match: HelpRequestTutorialMatch | None = None,
+        tutorial_plan: HelpRequestTutorialPlan | None = None,
     ) -> HelpRequestResult:
         """Pause automation when deterministic safety review is required."""
         return self._transition(
@@ -209,6 +211,7 @@ class HelpRequestService:
             human_review_reason=reason,
             workflow_stage=workflow_stage or "needs_human_review",
             tutorial_match=tutorial_match,
+            tutorial_plan=tutorial_plan,
         )
 
     def publish_guidance(
@@ -235,6 +238,7 @@ class HelpRequestService:
         human_review_reason: str | None = None,
         workflow_stage: str | None = None,
         tutorial_match: HelpRequestTutorialMatch | None = None,
+        tutorial_plan: HelpRequestTutorialPlan | None = None,
     ) -> HelpRequestResult:
         now = self._clock()
         result = self._repository.get(request_id, now)
@@ -247,6 +251,7 @@ class HelpRequestService:
             human_review_reason=human_review_reason,
             workflow_stage=workflow_stage,
             tutorial_match=tutorial_match,
+            tutorial_plan=tutorial_plan,
         )
         self._repository.save(updated, result.state_version, now)
         return updated

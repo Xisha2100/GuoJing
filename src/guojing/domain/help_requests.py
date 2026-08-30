@@ -14,6 +14,7 @@ MAX_REDACTIONS = 20
 MAX_WORKFLOW_STAGE_LENGTH = 40
 MAX_TUTORIAL_MATCH_REASON_LENGTH = 80
 MAX_TUTORIAL_ID_LENGTH = 120
+MAX_TUTORIAL_PLAN_ACTIONS = 20
 
 
 class HelpRequestIntent(StrEnum):
@@ -66,6 +67,35 @@ class HelpRequestTutorialMatch:
             self.graph_id is None or self.node_id is None or self.revision_number is None
         ):
             raise ValueError("matched tutorial metadata must include a candidate")
+
+
+@dataclass(frozen=True, slots=True)
+class HelpRequestTutorialPlan:
+    """Pinned, low-risk tutorial actions that an Android client may render manually."""
+
+    graph_id: str
+    node_id: str
+    revision_number: int
+    compatibility_status: str
+    allowed_transition_ids: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        for value, field_name in ((self.graph_id, "graph_id"), (self.node_id, "node_id")):
+            if not value.strip() or len(value) > MAX_TUTORIAL_ID_LENGTH:
+                raise ValueError(f"tutorial plan {field_name} must contain 1 to 120 characters")
+        if self.revision_number < 1:
+            raise ValueError("tutorial plan revision_number must be positive")
+        if not self.compatibility_status.strip() or len(self.compatibility_status) > 40:
+            raise ValueError("tutorial plan compatibility_status must contain 1 to 40 characters")
+        if len(self.allowed_transition_ids) > MAX_TUTORIAL_PLAN_ACTIONS:
+            raise ValueError("tutorial plan may contain at most 20 allowed transitions")
+        if len(set(self.allowed_transition_ids)) != len(self.allowed_transition_ids):
+            raise ValueError("tutorial plan transition ids must be unique")
+        if any(
+            not transition_id.strip() or len(transition_id) > MAX_TUTORIAL_ID_LENGTH
+            for transition_id in self.allowed_transition_ids
+        ):
+            raise ValueError("tutorial plan transition ids must contain 1 to 120 characters")
 
 
 _UNSAFE_GUIDANCE_TERMS = (
@@ -173,6 +203,7 @@ class HelpRequestResult:
     human_review_reason: str | None = None
     workflow_stage: str | None = None
     tutorial_match: HelpRequestTutorialMatch | None = None
+    tutorial_plan: HelpRequestTutorialPlan | None = None
 
     def __post_init__(self) -> None:
         if self.state_version < 1:
@@ -205,6 +236,7 @@ class HelpRequestResult:
         human_review_reason: str | None = None,
         workflow_stage: str | None = None,
         tutorial_match: HelpRequestTutorialMatch | None = None,
+        tutorial_plan: HelpRequestTutorialPlan | None = None,
     ) -> "HelpRequestResult":
         """Apply one allowed forward-only transition."""
         if updated_at < self.updated_at:
@@ -239,6 +271,7 @@ class HelpRequestResult:
             human_review_reason=human_review_reason,
             workflow_stage=self.workflow_stage if workflow_stage is None else workflow_stage,
             tutorial_match=self.tutorial_match if tutorial_match is None else tutorial_match,
+            tutorial_plan=self.tutorial_plan if tutorial_plan is None else tutorial_plan,
         )
 
     def matches_request(self, request_id: UUID, client_request_id: UUID) -> bool:

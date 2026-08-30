@@ -13,6 +13,7 @@ from guojing.application.help_requests.workflow import (
     HelpRequestWorkflow,
     HelpRequestWorkflowStage,
 )
+from guojing.application.tutorials.execution_plan import TutorialExecutionPlanService
 from guojing.application.tutorials.matcher import TutorialMatchService
 from guojing.application.tutorials.models import PublishedTutorial, PublishedTutorialSummary
 from guojing.application.tutorials.service import TutorialService
@@ -131,12 +132,14 @@ def _workflow(
     help_service: HelpRequestService,
 ) -> tuple[HelpRequestWorkflow, HelpRequestEvidenceService]:
     evidence_service = HelpRequestEvidenceService(help_service)
-    tutorial_service = TutorialMatchService(TutorialService(StubTutorialRepository(_graph())))
+    published_tutorials = TutorialService(StubTutorialRepository(_graph()))
+    tutorial_service = TutorialMatchService(published_tutorials)
     return (
         HelpRequestWorkflow(
             help_service,
             evidence_service,
             tutorial_service,
+            TutorialExecutionPlanService(published_tutorials),
             DeterministicHelpRequestProcessor(),
         ),
         evidence_service,
@@ -161,6 +164,8 @@ def test_tutorial_request_waits_for_evidence_then_selects_tutorial() -> None:
     assert matched.tutorial_decision is not None
     assert matched.tutorial_decision.candidate is not None
     assert matched.tutorial_decision.candidate.node_id == "chat_list"
+    assert matched.result.tutorial_plan is not None
+    assert matched.result.tutorial_plan.graph_id == "wechat_chat_list"
 
 
 def test_uncertain_tutorial_evidence_is_sent_to_human_review() -> None:

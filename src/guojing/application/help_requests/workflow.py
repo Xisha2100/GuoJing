@@ -12,6 +12,7 @@ from uuid import UUID
 from guojing.application.help_requests.evidence_service import HelpRequestEvidenceService
 from guojing.application.help_requests.processor import HelpRequestProcessor
 from guojing.application.help_requests.service import HelpRequestService
+from guojing.application.tutorials.execution_plan import TutorialExecutionPlanService
 from guojing.application.tutorials.matcher import (
     TutorialMatchDecision,
     TutorialMatchService,
@@ -53,11 +54,13 @@ class HelpRequestWorkflow:
         help_request_service: HelpRequestService,
         evidence_service: HelpRequestEvidenceService,
         tutorial_match_service: TutorialMatchService,
+        execution_plan_service: TutorialExecutionPlanService,
         general_guidance_processor: HelpRequestProcessor,
     ) -> None:
         self._help_requests = help_request_service
         self._evidence = evidence_service
         self._tutorial_matcher = tutorial_match_service
+        self._execution_plan_service = execution_plan_service
         self._general_guidance_processor = general_guidance_processor
 
     def run(self, request_id: UUID) -> HelpRequestWorkflowState:
@@ -105,11 +108,13 @@ class HelpRequestWorkflow:
         tutorial_match = _to_persisted_match(decision)
         if decision.status is TutorialMatchStatus.MATCHED:
             assert decision.candidate is not None
+            tutorial_plan = self._execution_plan_service.build(decision.candidate)
             result = self._help_requests.mark_needs_human_review(
                 request_id,
                 "教程页面已匹配,请人工确认版本和步骤后发布安全说明。",
                 workflow_stage=HelpRequestWorkflowStage.TUTORIAL_MATCHED.value,
                 tutorial_match=tutorial_match,
+                tutorial_plan=tutorial_plan,
             )
             return HelpRequestWorkflowState(
                 request_id=request_id,

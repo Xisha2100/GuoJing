@@ -233,9 +233,17 @@ def test_tutorial_workflow_is_composed_and_checkpoint_survives_new_app(
         "node_id": "chat_list",
         "revision_number": 1,
     }
+    assert processed.json()["tutorial_plan"] == {
+        "graph_id": graph.graph_id,
+        "node_id": "chat_list",
+        "revision_number": 1,
+        "compatibility_status": "verified",
+        "allowed_transition_ids": ["open_family_chat"],
+    }
     assert polled.status_code == 200
     assert polled.json()["workflow_stage"] == "tutorial_matched"
     assert polled.json()["tutorial_match"] == processed.json()["tutorial_match"]
+    assert polled.json()["tutorial_plan"] == processed.json()["tutorial_plan"]
     assert "sanitized_image_base64" not in polled.json()
 
 

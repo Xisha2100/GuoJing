@@ -512,7 +512,7 @@ GET  /api/v1/help-requests/{request_id}
 POST /api/v1/admin/help-requests/{request_id}/process
 ```
 
-管理员处理接口需要登录会话和 CSRF 请求头。状态响应中的 `workflow_stage` 与 `tutorial_match` 只包含安全的阶段和教程标识；它们不是自动点击或支付授权。
+管理员处理接口需要登录会话和 CSRF 请求头。状态响应中的 `workflow_stage`、`tutorial_match` 与 `tutorial_plan` 只包含安全的阶段、教程标识和已审查的低风险 transition ID；它们不是自动点击或支付授权。
 
 ## 隐私与安全原则
 
@@ -535,7 +535,7 @@ POST /api/v1/admin/help-requests/{request_id}/process
 
 ## 下一步
 
-模块 33 为每个求助签发短期 capability；证据上传和结果轮询必须携带它。接下来将把教程匹配结果扩展为风险和版本感知的固定执行计划。
+模块 34 会将匹配结果固定为特定教程修订、节点和低风险 transition ID；客户端只能据此解释下一步，不能自行推断动作。接下来把该计划接入 Android 的教程执行循环。
 
 ## License
 

@@ -20,6 +20,7 @@ from guojing.domain.help_requests import (
     HelpRequestProcessingStatus,
     HelpRequestResult,
     HelpRequestTutorialMatch,
+    HelpRequestTutorialPlan,
 )
 from guojing.infrastructure.persistence.database import Database
 from guojing.infrastructure.persistence.models import HelpRequestResultRecord
@@ -171,12 +172,14 @@ def _to_record(
         tutorial_revision_number=(
             result.tutorial_match.revision_number if result.tutorial_match is not None else None
         ),
+        tutorial_plan_json=_serialize_tutorial_plan(result.tutorial_plan),
     )
 
 
 def _from_record(record: HelpRequestResultRecord) -> HelpRequestResult:
     guidance = _deserialize_guidance(record.guidance_json)
     tutorial_match = _deserialize_tutorial_match(record)
+    tutorial_plan = _deserialize_tutorial_plan(record.tutorial_plan_json)
     return HelpRequestResult(
         request_id=UUID(record.request_id),
         client_request_id=UUID(record.client_request_id),
@@ -190,6 +193,7 @@ def _from_record(record: HelpRequestResultRecord) -> HelpRequestResult:
         human_review_reason=record.human_review_reason,
         workflow_stage=record.workflow_stage,
         tutorial_match=tutorial_match,
+        tutorial_plan=tutorial_plan,
     )
 
 
@@ -213,6 +217,41 @@ def _deserialize_tutorial_match(
         graph_id=record.tutorial_graph_id,
         node_id=record.tutorial_node_id,
         revision_number=record.tutorial_revision_number,
+    )
+
+
+def _serialize_tutorial_plan(plan: HelpRequestTutorialPlan | None) -> str | None:
+    if plan is None:
+        return None
+    return json.dumps(
+        {
+            "graph_id": plan.graph_id,
+            "node_id": plan.node_id,
+            "revision_number": plan.revision_number,
+            "compatibility_status": plan.compatibility_status,
+            "allowed_transition_ids": plan.allowed_transition_ids,
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+
+
+def _deserialize_tutorial_plan(payload: str | None) -> HelpRequestTutorialPlan | None:
+    if payload is None:
+        return None
+    decoded = json.loads(payload)
+    transition_ids = decoded.get("allowed_transition_ids")
+    if not isinstance(transition_ids, list) or not all(
+        isinstance(value, str) for value in transition_ids
+    ):
+        raise ValueError("stored tutorial plan transition ids are invalid")
+    return HelpRequestTutorialPlan(
+        graph_id=decoded["graph_id"],
+        node_id=decoded["node_id"],
+        revision_number=decoded["revision_number"],
+        compatibility_status=decoded["compatibility_status"],
+        allowed_transition_ids=tuple(transition_ids),
     )
 
 
@@ -240,6 +279,7 @@ def _transition_values(result: HelpRequestResult) -> dict[str, object]:
         "tutorial_revision_number": (
             result.tutorial_match.revision_number if result.tutorial_match is not None else None
         ),
+        "tutorial_plan_json": _serialize_tutorial_plan(result.tutorial_plan),
     }
 
 
