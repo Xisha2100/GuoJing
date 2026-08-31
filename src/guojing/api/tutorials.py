@@ -23,6 +23,7 @@ from guojing.application.tutorials.ports import (
     TutorialNotFoundError,
 )
 from guojing.application.tutorials.service import TutorialService
+from guojing.application.tutorials.templates import TutorialTemplateCatalog
 from guojing.domain.auth import AuthenticatedAdminSession
 from guojing.domain.tutorials.validation import InvalidTutorialGraph
 
@@ -87,6 +88,21 @@ class PublishedTutorialResponse(ApiModel):
             published_at=value.published_at,
             graph=TutorialGraphDto.from_domain(value.graph),
         )
+
+
+class TutorialTemplateResponse(ApiModel):
+    template_id: str
+
+
+@router.get("/admin/tutorial-templates", response_model=list[TutorialTemplateResponse])
+def list_tutorial_templates(
+    _admin: AdminMutationDependency,
+) -> list[TutorialTemplateResponse]:
+    """List selectable starters; selection and publication remain separate actions."""
+    return [
+        TutorialTemplateResponse(template_id=value)
+        for value in TutorialTemplateCatalog().available_ids()
+    ]
 
 
 @router.post(

@@ -535,7 +535,7 @@ POST /api/v1/admin/help-requests/{request_id}/process
 
 ## 下一步
 
-模块 45 在 Android 侧增加教程启动守卫，固定计划不能越过本地图的版本、节点或低风险边界。
+模块 46 为管理端提供受控模板目录 API。接下来把队列候选与租约规则组合成 worker claim 决策。
 
 ## License
 
