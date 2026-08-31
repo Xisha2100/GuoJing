@@ -3,6 +3,7 @@ import type {
   Promotion,
   Readiness,
   TutorialDraftDocument,
+  TutorialTemplate,
   Workspace,
   WorkspaceSummary,
 } from "./types";
@@ -84,6 +85,18 @@ export const adminApi = {
     return request<Workspace>(
       "/tutorial-drafts",
       { method: "POST", body: JSON.stringify({}) },
+      true,
+    );
+  },
+
+  listTutorialTemplates(): Promise<TutorialTemplate[]> {
+    return request<TutorialTemplate[]>("/tutorial-templates");
+  },
+
+  importTemplate(templateId: string): Promise<Workspace> {
+    return request<Workspace>(
+      `/tutorial-drafts/from-template/${encodeURIComponent(templateId)}`,
+      { method: "POST" },
       true,
     );
   },

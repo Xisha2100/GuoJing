@@ -15,6 +15,7 @@ export function WorkspaceDashboard({
   const [selected, setSelected] = useState<Workspace | null>(null);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
+  const [templates, setTemplates] = useState<{ template_id: string }[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   const loadList = useCallback(async () => {
@@ -37,9 +38,9 @@ export function WorkspaceDashboard({
     let active = true;
     adminApi
       .listWorkspaces()
-      .then((result) => {
+      .then((workspaceResult) => {
         if (active) {
-          setWorkspaces(result);
+          setWorkspaces(workspaceResult);
         }
       })
       .catch((caught: unknown) => {
@@ -91,6 +92,35 @@ export function WorkspaceDashboard({
     }
   }
 
+  async function importTemplate(templateId: string) {
+    setCreating(true);
+    setError(null);
+    try {
+      setSelected(await adminApi.importTemplate(templateId));
+    } catch (caught) {
+      if (isApiError(caught, 401)) {
+        onUnauthorized();
+        return;
+      }
+      setError(caught instanceof Error ? caught.message : "无法导入模板。");
+    } finally {
+      setCreating(false);
+    }
+  }
+
+  async function loadTemplates() {
+    setError(null);
+    try {
+      setTemplates(await adminApi.listTutorialTemplates());
+    } catch (caught) {
+      if (isApiError(caught, 401)) {
+        onUnauthorized();
+        return;
+      }
+      setError(caught instanceof Error ? caught.message : "无法读取模板目录。");
+    }
+  }
+
   if (selected !== null) {
     return (
       <WorkspaceEditor
@@ -121,6 +151,34 @@ export function WorkspaceDashboard({
           {creating ? "正在新建…" : "＋ 新建工作区"}
         </button>
       </div>
+
+      {templates.length > 0 ? (
+        <div className="template-panel" aria-label="教程模板">
+          <p className="eyebrow">快速开始</p>
+          <div className="template-actions">
+            {templates.map((template) => (
+              <button
+                className="secondary-button"
+                type="button"
+                key={template.template_id}
+                disabled={creating}
+                onClick={() => void importTemplate(template.template_id)}
+              >
+                导入 {template.template_id}
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : (
+        <button
+          className="secondary-button"
+          type="button"
+          disabled={creating}
+          onClick={() => void loadTemplates()}
+        >
+          从模板开始
+        </button>
+      )}
 
       {error !== null && (
         <p className="notice notice-error" role="alert">

@@ -63,3 +63,7 @@ export interface Promotion {
   revision_number: number;
   created_at: string;
 }
+
+export interface TutorialTemplate {
+  template_id: string;
+}
