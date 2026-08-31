@@ -546,7 +546,12 @@ private fun SubmittedContent(
     )
     InfoCard(
         title = "服务端处理记录",
-        body = "服务端已校验脱敏副本并立即丢弃图片。服务端还没有连接 OCR、视觉模型或 Agent，因此暂时不会返回自动答案。",
+        body = when (state.processingStatus) {
+            HelpRequestProcessingStatus.GUIDANCE_READY ->
+                "服务端已校验脱敏副本并立即丢弃图片，已生成安全的基础说明。"
+            else ->
+                "服务端已校验脱敏副本并立即丢弃图片。当前仍由人工/确定性流程处理，不会自动操作手机。"
+        },
     )
     InfoCard(
         title = "处理分支",
