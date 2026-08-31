@@ -535,7 +535,7 @@ POST /api/v1/admin/help-requests/{request_id}/process
 
 ## 下一步
 
-模块 48 让 Android 从教程图派生隐私与手动操作展示状态，并在高风险或非本地图上禁止启动。下一步补端到端契约回归。
+模块 49 集中维护求助结果 schema 版本并补契约测试。下一步进行 41–49 的最终端到端回归与发布检查。
 
 ## License
 

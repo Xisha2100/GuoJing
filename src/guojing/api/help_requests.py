@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
 from pydantic import BaseModel, ConfigDict
 
 from guojing.api.dependencies import get_help_request_evidence_service, get_help_request_workflow
+from guojing.application.help_requests.contracts import HELP_REQUEST_RESULT_SCHEMA_VERSION
 from guojing.application.help_requests.dto import HelpRequestRequest
 from guojing.application.help_requests.evidence_dto import HelpRequestEvidenceRequest
 from guojing.application.help_requests.evidence_service import (
@@ -133,7 +134,7 @@ class HelpRequestResultResponse(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    schema_version: Literal["1.2"] = "1.2"
+    schema_version: Literal["1.2"] = HELP_REQUEST_RESULT_SCHEMA_VERSION
     request_id: UUID
     client_request_id: UUID
     intent: HelpRequestIntent
