@@ -16,6 +16,7 @@ from guojing.api.dependencies import (
 )
 from guojing.api.help_requests import HelpRequestResultResponse
 from guojing.application.auth.service import AdminAuthService
+from guojing.application.help_requests.queue import HelpRequestQueue
 from guojing.application.help_requests.service import HelpRequestNotFound, HelpRequestService
 from guojing.application.help_requests.workflow import (
     HelpRequestWorkflow,
@@ -98,6 +99,10 @@ class ReviewSummary(ReviewApiModel):
         )
 
 
+class ProcessNextRequest(ReviewApiModel):
+    limit: int = Field(default=10, ge=1, le=100)
+
+
 @router.get("/reviews", response_model=list[ReviewSummary])
 def list_help_request_reviews(
     _admin: AdminSessionDependency,
@@ -110,6 +115,36 @@ def list_help_request_reviews(
             status=HelpRequestProcessingStatus.NEEDS_HUMAN_REVIEW,
         )
     ]
+
+
+@router.post("/process-next", response_model=list[HelpRequestResultResponse])
+def process_next_help_requests(
+    request: ProcessNextRequest,
+    _admin: AdminMutationDependency,
+    auth_service: AuthServiceDependency,
+    workflow: HelpRequestWorkflowDependency,
+    service: HelpRequestServiceDependency,
+) -> list[HelpRequestResultResponse]:
+    """Run one bounded worker pass from the authenticated admin boundary."""
+    auth_service.record_action(
+        _admin,
+        "help_request.process_batch_requested",
+        "help_request",
+        None,
+        {"limit": request.limit},
+    )
+    queue = HelpRequestQueue(service)
+    results: list[HelpRequestResultResponse] = []
+    seen: set[UUID] = set()
+    for _ in range(request.limit):
+        pending = queue.next_received()
+        if pending is None or pending.request_id in seen:
+            break
+        seen.add(pending.request_id)
+        results.append(
+            HelpRequestResultResponse.from_workflow_state(workflow.run(pending.request_id))
+        )
+    return results
 
 
 @router.post("/{request_id}/process", response_model=HelpRequestResultResponse)
