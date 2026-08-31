@@ -25,6 +25,7 @@ from guojing.application.tutorial_drafts.ports import (
 )
 from guojing.application.tutorial_drafts.service import TutorialDraftService
 from guojing.application.tutorials.ports import TutorialIdentityConflictError
+from guojing.application.tutorials.templates import TutorialTemplateCatalog
 from guojing.domain.auth import AuthenticatedAdminSession
 from guojing.domain.tutorials.authoring import (
     IncompleteTutorialDraft,
@@ -174,6 +175,32 @@ def create_workspace(
     )
     workspace = service.create(request.document.to_domain())
     return WorkspaceResponse.from_domain(workspace)
+
+
+@router.post(
+    "/from-template/{template_id}",
+    response_model=WorkspaceResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_workspace_from_template(
+    template_id: str,
+    service: DraftServiceDependency,
+    admin: AdminMutationDependency,
+    auth_service: AuthServiceDependency,
+) -> WorkspaceResponse:
+    """Import a reviewed starter into an editable draft, never directly to publication."""
+    try:
+        document = TutorialTemplateCatalog().create_document(template_id)
+    except ValueError as error:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error)) from error
+    auth_service.record_action(
+        admin,
+        "tutorial_workspace.template_import_requested",
+        "tutorial_draft_workspace",
+        None,
+        {"template_id": template_id},
+    )
+    return WorkspaceResponse.from_domain(service.create(document))
 
 
 @router.get("", response_model=list[WorkspaceSummaryResponse])
