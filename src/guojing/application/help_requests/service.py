@@ -15,6 +15,7 @@ from guojing.application.help_requests.in_memory_repository import (
 from guojing.application.help_requests.models import HelpRequestReceipt
 from guojing.application.help_requests.ports import (
     ClientRequestConflictError,
+    HelpRequestCapacityError,
     HelpRequestRepository,
 )
 from guojing.application.help_requests.processor import HelpRequestProcessor
@@ -36,6 +37,10 @@ class InvalidHelpRequestPayload(ValueError):
 
 class HelpRequestNotFound(LookupError):
     """Raised when a status query references an unknown or expired request."""
+
+
+class HelpRequestCapacityExceeded(RuntimeError):
+    """Raised when accepting another request would evict active work."""
 
 
 PROCESSOR_FAILURE_REVIEW_REASON = "处理服务暂时不可用, 请由人工复核后重试."
@@ -97,6 +102,7 @@ class HelpRequestService:
                 request_id=uuid4(),
                 client_request_id=command.client_request_id,
                 intent=command.intent,
+                question=command.question,
                 processing_route=route,
                 processing_status=HelpRequestProcessingStatus.RECEIVED,
                 received_at=now,
@@ -112,6 +118,8 @@ class HelpRequestService:
                 )
             except ClientRequestConflictError as error:
                 raise InvalidHelpRequestPayload(str(error)) from error
+            except HelpRequestCapacityError as error:
+                raise HelpRequestCapacityExceeded(str(error)) from error
             return self._receipt(stored, access_token)
         finally:
             image[:] = b"\x00" * len(image)
@@ -122,6 +130,10 @@ class HelpRequestService:
         if result is None:
             raise HelpRequestNotFound(str(request_id))
         return result
+
+    def current_time(self) -> datetime:
+        """Expose the service clock to coordinated queue/workflow components."""
+        return self._clock()
 
     def is_access_authorized(self, request_id: UUID, access_token: str) -> bool:
         """Check the bearer capability issued with one accepted request receipt."""

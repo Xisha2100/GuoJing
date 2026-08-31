@@ -1,11 +1,16 @@
 """ASGI guards for privacy-sensitive help-request HTTP boundaries."""
 
 import json
+from collections import deque
+from threading import Lock
+from time import monotonic
 
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 HELP_REQUEST_PATH_PREFIX = "/api/v1/help-requests"
 MAX_HELP_REQUEST_BODY_BYTES = 12 * 1024 * 1024
+HELP_REQUEST_RATE_WINDOW_SECONDS = 60.0
+HELP_REQUEST_RATE_LIMIT = 30
 
 
 class HelpRequestSecurityMiddleware:
@@ -16,15 +21,27 @@ class HelpRequestSecurityMiddleware:
         app: ASGIApp,
         *,
         max_body_bytes: int = MAX_HELP_REQUEST_BODY_BYTES,
+        rate_limit: int = HELP_REQUEST_RATE_LIMIT,
+        rate_window_seconds: float = HELP_REQUEST_RATE_WINDOW_SECONDS,
     ) -> None:
         if max_body_bytes < 1:
             raise ValueError("max_body_bytes must be positive")
         self.app = app
         self.max_body_bytes = max_body_bytes
+        if rate_limit < 1 or rate_window_seconds <= 0:
+            raise ValueError("rate limit settings must be positive")
+        self.rate_limit = rate_limit
+        self.rate_window_seconds = rate_window_seconds
+        self._rate_lock = Lock()
+        self._requests_by_client: dict[str, deque[float]] = {}
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if not _is_help_request_scope(scope):
             await self.app(scope, receive, send)
+            return
+
+        if _is_submission_scope(scope) and not self._allow_submission(scope):
+            await _send_rate_limited(send)
             return
 
         content_length = _content_length(scope)
@@ -61,6 +78,26 @@ class HelpRequestSecurityMiddleware:
             if not response_started:
                 await _send_too_large(send)
 
+    def _allow_submission(self, scope: Scope) -> bool:
+        client = scope.get("client")
+        client_id = str(client[0]) if isinstance(client, (tuple, list)) and client else "unknown"
+        now = monotonic()
+        with self._rate_lock:
+            timestamps = self._requests_by_client.setdefault(client_id, deque())
+            cutoff = now - self.rate_window_seconds
+            while timestamps and timestamps[0] <= cutoff:
+                timestamps.popleft()
+            if len(timestamps) >= self.rate_limit:
+                return False
+            timestamps.append(now)
+            if len(self._requests_by_client) > 10_000:
+                self._requests_by_client = {
+                    key: value
+                    for key, value in self._requests_by_client.items()
+                    if value and value[-1] > cutoff
+                }
+            return True
+
 
 class _RequestBodyTooLarge(Exception):
     """Internal signal used to stop reading an oversized streaming request."""
@@ -81,6 +118,10 @@ def _content_length(scope: Scope) -> int | None:
         except (TypeError, ValueError):
             return None
     return None
+
+
+def _is_submission_scope(scope: Scope) -> bool:
+    return scope.get("method") == "POST" and scope.get("path") == HELP_REQUEST_PATH_PREFIX
 
 
 def _append_header_if_missing(headers: list[tuple[bytes, bytes]], key: bytes, value: bytes) -> None:
@@ -105,6 +146,27 @@ async def _send_too_large(send: Send) -> None:
             "headers": [
                 (b"content-type", b"application/json"),
                 (b"content-length", str(len(payload)).encode("ascii")),
+                (b"cache-control", b"no-store"),
+                (b"pragma", b"no-cache"),
+            ],
+        }
+    )
+    await send({"type": "http.response.body", "body": payload})
+
+
+async def _send_rate_limited(send: Send) -> None:
+    payload = json.dumps(
+        {"detail": "too many help requests; please retry later"},
+        separators=(",", ":"),
+    ).encode("utf-8")
+    await send(
+        {
+            "type": "http.response.start",
+            "status": 429,
+            "headers": [
+                (b"content-type", b"application/json"),
+                (b"content-length", str(len(payload)).encode("ascii")),
+                (b"retry-after", b"60"),
                 (b"cache-control", b"no-store"),
                 (b"pragma", b"no-cache"),
             ],

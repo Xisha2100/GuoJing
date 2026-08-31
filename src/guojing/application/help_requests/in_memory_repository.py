@@ -6,9 +6,13 @@ from uuid import UUID
 
 from guojing.application.help_requests.ports import (
     ClientRequestConflictError,
+    HelpRequestCapacityError,
     HelpRequestStateConflictError,
 )
-from guojing.domain.help_requests import HelpRequestProcessingStatus, HelpRequestResult
+from guojing.domain.help_requests import (
+    HelpRequestProcessingStatus,
+    HelpRequestResult,
+)
 
 
 class InMemoryHelpRequestRepository:
@@ -18,7 +22,7 @@ class InMemoryHelpRequestRepository:
         if max_results < 1:
             raise ValueError("max_results must be positive")
         self._max_results = max_results
-        self._records: dict[UUID, tuple[HelpRequestResult, str, str, datetime]] = {}
+        self._records: dict[UUID, tuple[HelpRequestResult, str, tuple[str, ...], datetime]] = {}
         self._request_ids_by_client_id: dict[UUID, UUID] = {}
         self._lock = Lock()
 
@@ -34,7 +38,7 @@ class InMemoryHelpRequestRepository:
             self._purge_expired(now)
             previous_id = self._request_ids_by_client_id.get(result.client_request_id)
             if previous_id is not None:
-                previous, previous_fingerprint, _previous_digest, previous_expiry = self._records[
+                previous, previous_fingerprint, previous_digests, previous_expiry = self._records[
                     previous_id
                 ]
                 if previous_fingerprint != fingerprint:
@@ -44,7 +48,7 @@ class InMemoryHelpRequestRepository:
                 self._records[previous_id] = (
                     previous,
                     previous_fingerprint,
-                    access_token_digest,
+                    _append_digest(previous_digests, access_token_digest),
                     previous_expiry,
                 )
                 return previous
@@ -52,7 +56,7 @@ class InMemoryHelpRequestRepository:
             self._records[result.request_id] = (
                 result,
                 fingerprint,
-                access_token_digest,
+                (access_token_digest,),
                 expires_at,
             )
             self._request_ids_by_client_id[result.client_request_id] = result.request_id
@@ -73,7 +77,7 @@ class InMemoryHelpRequestRepository:
         with self._lock:
             self._purge_expired(now)
             stored = self._records.get(request_id)
-            return stored is not None and stored[2] == access_token_digest
+            return stored is not None and access_token_digest in stored[2]
 
     def list(
         self,
@@ -93,7 +97,7 @@ class InMemoryHelpRequestRepository:
             stored = self._records.get(result.request_id)
             if stored is None:
                 raise HelpRequestStateConflictError("help request result no longer exists")
-            current, fingerprint, access_token_digest, expires_at = stored
+            current, fingerprint, access_token_digests, expires_at = stored
             if current.state_version != expected_version:
                 raise HelpRequestStateConflictError(
                     "help request result was updated by another worker",
@@ -103,7 +107,7 @@ class InMemoryHelpRequestRepository:
             self._records[result.request_id] = (
                 result,
                 fingerprint,
-                access_token_digest,
+                access_token_digests,
                 expires_at,
             )
 
@@ -119,9 +123,25 @@ class InMemoryHelpRequestRepository:
 
     def _evict_if_full(self) -> None:
         while len(self._records) >= self._max_results:
+            evictable = [
+                request_id
+                for request_id, (result, _, _, _) in self._records.items()
+                if result.processing_status is HelpRequestProcessingStatus.GUIDANCE_READY
+            ]
+            if not evictable:
+                raise HelpRequestCapacityError(
+                    "help request capacity is full; active requests are never evicted",
+                )
             oldest_id = min(
-                self._records,
+                evictable,
                 key=lambda request_id: self._records[request_id][0].updated_at,
             )
             oldest, _, _, _ = self._records.pop(oldest_id)
             self._request_ids_by_client_id.pop(oldest.client_request_id, None)
+
+
+def _append_digest(previous: tuple[str, ...], digest: str, *, limit: int = 8) -> tuple[str, ...]:
+    """Keep a small overlap window so late idempotent receipts remain valid."""
+    if digest in previous:
+        return previous
+    return (*previous, digest)[-limit:]

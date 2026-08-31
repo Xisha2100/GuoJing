@@ -27,6 +27,8 @@ import com.xisha.guojing.observation.DisabledScreenshotOcrProvider
 import com.xisha.guojing.observation.ScreenObservationPort
 import com.xisha.guojing.observation.ScreenshotOcrProvider
 import com.xisha.guojing.privacy.DisabledScreenshotPrivacyProcessor
+import com.xisha.guojing.privacy.PlaintextReceiptCipher
+import com.xisha.guojing.privacy.ReceiptCipher
 import com.xisha.guojing.privacy.ScreenshotPrivacyProcessor
 import com.xisha.guojing.ui.catalog.TutorialCatalogScreen
 import com.xisha.guojing.ui.catalog.TutorialCatalogViewModel
@@ -48,6 +50,7 @@ fun GuoJingApp(
     helpRequestSender: HelpRequestSender = DisabledHelpRequestSender,
     helpRequestStatusReader: HelpRequestStatusReader = DisabledHelpRequestStatusReader,
     screenshotOcrProvider: ScreenshotOcrProvider = DisabledScreenshotOcrProvider,
+    receiptCipher: ReceiptCipher = PlaintextReceiptCipher,
     pageObservationServiceEnabled: Boolean = false,
     onOpenAccessibilitySettings: () -> Unit = {},
 ) {
@@ -80,6 +83,7 @@ fun GuoJingApp(
                     helpRequestSender,
                     screenshotOcrProvider,
                     helpRequestStatusReader,
+                    receiptCipher,
                 ),
             )
             val uiState by screenshotHelpViewModel.uiState.collectAsStateWithLifecycle()

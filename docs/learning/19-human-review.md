@@ -11,7 +11,7 @@ GET  /api/v1/admin/help-requests/reviews
 POST /api/v1/admin/help-requests/{request_id}/guidance
 ```
 
-列表只返回 UUID、路由、状态、时间和复核原因。它不返回截图、Base64 或问题正文。发布请求使用严格的标题和 1–20 个步骤模型。
+列表返回有长度上限的问题正文以及 UUID、路由、状态、时间和复核原因；它不返回截图、Base64 或 OCR。发布请求使用严格的标题和 1–20 个步骤模型。
 
 ## 3. 权限与审计
 

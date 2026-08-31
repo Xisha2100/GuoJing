@@ -5,7 +5,9 @@ state transitions deterministic and testable without a model, while the node
 boundaries map directly to a future LangGraph/Deep Agent graph.
 """
 
+from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from enum import StrEnum
 from uuid import UUID
 
@@ -56,16 +58,47 @@ class HelpRequestWorkflow:
         tutorial_match_service: TutorialMatchService,
         execution_plan_service: TutorialExecutionPlanService,
         general_guidance_processor: HelpRequestProcessor,
+        clock: Callable[[], datetime] | None = None,
+        processing_timeout: timedelta = timedelta(minutes=2),
     ) -> None:
+        if processing_timeout <= timedelta(0):
+            raise ValueError("processing_timeout must be positive")
         self._help_requests = help_request_service
         self._evidence = evidence_service
         self._tutorial_matcher = tutorial_match_service
         self._execution_plan_service = execution_plan_service
         self._general_guidance_processor = general_guidance_processor
+        self._clock = clock or help_request_service.current_time
+        self._processing_timeout = processing_timeout
 
     def run(self, request_id: UUID) -> HelpRequestWorkflowState:
-        """Execute one bounded pass; no node performs an Android action."""
+        """Execute one pass and convert unexpected failures into review."""
         current = self._help_requests.get_result(request_id)
+        try:
+            return self._run_current(current)
+        except Exception:
+            latest = self._help_requests.get_result(request_id)
+            if latest.processing_status is HelpRequestProcessingStatus.RECEIVED:
+                latest = self._help_requests.mark_processing(
+                    request_id,
+                    workflow_stage=HelpRequestWorkflowStage.NEEDS_HUMAN_REVIEW.value,
+                )
+            if latest.processing_status is HelpRequestProcessingStatus.PROCESSING:
+                result = self._help_requests.mark_needs_human_review(
+                    request_id,
+                    "处理过程异常, 已转人工复核.",
+                    workflow_stage=HelpRequestWorkflowStage.NEEDS_HUMAN_REVIEW.value,
+                )
+                return HelpRequestWorkflowState(
+                    request_id=request_id,
+                    result=result,
+                    stage=HelpRequestWorkflowStage.NEEDS_HUMAN_REVIEW,
+                )
+            raise
+
+    def _run_current(self, current: HelpRequestResult) -> HelpRequestWorkflowState:
+        """Execute one bounded pass; no node performs an Android action."""
+        request_id = current.request_id
         if current.processing_status is HelpRequestProcessingStatus.GUIDANCE_READY:
             return self._state_from_result(current)
         if current.processing_status is HelpRequestProcessingStatus.NEEDS_HUMAN_REVIEW:
@@ -85,6 +118,23 @@ class HelpRequestWorkflow:
                 stage=HelpRequestWorkflowStage.COMPLETED,
             )
 
+        if (
+            current.processing_route is HelpRequestProcessingRoute.GENERAL_GUIDANCE
+            and current.processing_status is HelpRequestProcessingStatus.PROCESSING
+        ):
+            if current.updated_at <= self._clock() - self._processing_timeout:
+                result = self._help_requests.mark_needs_human_review(
+                    request_id,
+                    "处理租约已过期, 已转人工复核.",
+                    workflow_stage=HelpRequestWorkflowStage.NEEDS_HUMAN_REVIEW.value,
+                )
+                return HelpRequestWorkflowState(
+                    request_id=request_id,
+                    result=result,
+                    stage=HelpRequestWorkflowStage.NEEDS_HUMAN_REVIEW,
+                )
+            return self._state_from_result(current)
+
         if current.processing_route is not HelpRequestProcessingRoute.TUTORIAL_MATCH:
             raise ValueError("workflow cannot resume this request state")
         if current.processing_status is HelpRequestProcessingStatus.RECEIVED:
@@ -98,6 +148,19 @@ class HelpRequestWorkflow:
             raise ValueError("workflow can only run tutorial requests in progress")
         envelope = self._evidence.get_latest(request_id)
         if envelope is None:
+            if current.processing_status is HelpRequestProcessingStatus.PROCESSING and (
+                current.updated_at <= self._clock() - self._processing_timeout
+            ):
+                result = self._help_requests.mark_needs_human_review(
+                    request_id,
+                    "等待页面证据超时, 已转人工复核.",
+                    workflow_stage=HelpRequestWorkflowStage.NEEDS_HUMAN_REVIEW.value,
+                )
+                return HelpRequestWorkflowState(
+                    request_id=request_id,
+                    result=result,
+                    stage=HelpRequestWorkflowStage.NEEDS_HUMAN_REVIEW,
+                )
             return HelpRequestWorkflowState(
                 request_id=request_id,
                 result=processing,

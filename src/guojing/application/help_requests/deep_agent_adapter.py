@@ -1,8 +1,9 @@
 """A narrow port for a future LangChain Deep Agent integration."""
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from datetime import datetime
-from typing import Protocol
+from inspect import signature
+from typing import Protocol, cast
 
 from guojing.application.help_requests.model_adapter import GuidanceModel, ModelGuidanceContext
 
@@ -25,11 +26,16 @@ class DeepAgentGuidanceModel(GuidanceModel):
         *,
         deadline: datetime,
     ) -> Mapping[str, object]:
-        del deadline
-        return self._invoker.invoke(
-            {
-                "task": context.task,
-                "safety_rules": list(context.safety_rules),
-                "output_schema": {"action_ids": "1-20 approved action identifiers"},
-            },
-        )
+        payload = {
+            "task": context.task,
+            "safety_rules": list(context.safety_rules),
+            "output_schema": {"action_ids": "1-20 approved action identifiers"},
+        }
+        if context.question is not None:
+            payload["question"] = context.question
+        # Keep compatibility with older local adapters while ensuring new
+        # adapters receive the actual deadline instead of silently ignoring it.
+        if "deadline" in signature(self._invoker.invoke).parameters:
+            invoke_with_deadline = cast(Callable[..., Mapping[str, object]], self._invoker.invoke)
+            return invoke_with_deadline(payload, deadline=deadline)
+        return self._invoker.invoke(payload)

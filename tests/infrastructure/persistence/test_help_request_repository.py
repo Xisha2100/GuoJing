@@ -137,6 +137,28 @@ def test_idempotency_survives_a_new_service_instance(tmp_path: Path) -> None:
     database.dispose()
 
 
+def test_idempotent_receipts_keep_both_capabilities_and_review_question(
+    tmp_path: Path,
+) -> None:
+    now = datetime(2026, 8, 30, 8, 0, tzinfo=UTC)
+    database = _database(tmp_path)
+    client_id = uuid4()
+    first = HelpRequestService(
+        clock=lambda: now,
+        repository=SqlAlchemyHelpRequestRepository(database),
+    ).accept(_request(client_id))
+    second_service = HelpRequestService(
+        clock=lambda: now + timedelta(seconds=1),
+        repository=SqlAlchemyHelpRequestRepository(database),
+    )
+    second = second_service.accept(_request(client_id))
+
+    assert second_service.is_access_authorized(first.request_id, first.access_token)
+    assert second_service.is_access_authorized(first.request_id, second.access_token)
+    assert second_service.get_result(first.request_id).question == "这个页面下一步怎么做?"
+    database.dispose()
+
+
 def test_tutorial_checkpoint_round_trips_through_sqlite(tmp_path: Path) -> None:
     now = datetime(2026, 8, 30, 8, 0, tzinfo=UTC)
     database = _database(tmp_path)

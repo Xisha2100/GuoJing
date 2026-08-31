@@ -122,6 +122,7 @@ private fun TutorialOverview(
     var showDisclosure by remember { mutableStateOf(false) }
     val tutorial = uiState.tutorial
     val graph = tutorial.graph
+    val safety = tutorial.safetyPresentation()
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -169,8 +170,16 @@ private fun TutorialOverview(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             style = MaterialTheme.typography.bodyMedium,
         )
+        if (!safety.canStart) {
+            InfoCard(
+                title = "教程暂不可开始",
+                body = "该版本仍有未完成的安全校验，请等待审核通过后再试。",
+                emphasized = true,
+            )
+        }
         Button(
             onClick = onStartTutorial,
+            enabled = safety.canStart,
             modifier = Modifier
                 .fillMaxWidth()
                 .height(60.dp),

@@ -43,6 +43,8 @@ def test_migration_builds_and_removes_the_schema(
         "tutorial_graph_id",
         "tutorial_node_id",
         "tutorial_revision_number",
+        "question",
+        "access_token_digests_json",
     } <= result_columns
     with engine.connect() as connection:
         assert connection.exec_driver_sql("PRAGMA journal_mode").scalar_one() == "wal"

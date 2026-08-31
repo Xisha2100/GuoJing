@@ -25,7 +25,7 @@ from guojing.domain.tutorials.authoring import (
 
 
 class CaptureArtifactReferenceDto(TutorialDto):
-    artifact_id: str = Field(min_length=1)
+    artifact_id: str = Field(min_length=1, max_length=120)
     kind: CaptureArtifactKind
     sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
 
@@ -46,7 +46,7 @@ class CaptureArtifactReferenceDto(TutorialDto):
 
 
 class AnchorCandidateDto(TutorialDto):
-    candidate_id: str = Field(min_length=1)
+    candidate_id: str = Field(min_length=1, max_length=120)
     source: CandidateSource
     suggested_anchor: ScreenAnchorDto
     decision: ReviewDecision = ReviewDecision.PROPOSED
@@ -81,10 +81,10 @@ class AnchorCandidateDto(TutorialDto):
 
 
 class ScreenCaptureDto(TutorialDto):
-    capture_id: str = Field(min_length=1)
+    capture_id: str = Field(min_length=1, max_length=120)
     sharing_policy: CaptureSharingPolicy
-    artifacts: tuple[CaptureArtifactReferenceDto, ...] = ()
-    candidates: tuple[AnchorCandidateDto, ...] = ()
+    artifacts: tuple[CaptureArtifactReferenceDto, ...] = Field(default=(), max_length=32)
+    candidates: tuple[AnchorCandidateDto, ...] = Field(default=(), max_length=64)
 
     @model_validator(mode="after")
     def keep_local_capture_content_off_backend(self) -> Self:
@@ -165,7 +165,7 @@ class TutorialDraftDocumentDto(TutorialDto):
 
     schema_version: Literal["1.0"] = "1.0"
     graph: DraftTutorialGraphDto = Field(default_factory=DraftTutorialGraphDto)
-    captures: tuple[ScreenCaptureDto, ...] = ()
+    captures: tuple[ScreenCaptureDto, ...] = Field(default=(), max_length=128)
 
     @model_validator(mode="after")
     def require_unique_capture_ids(self) -> Self:

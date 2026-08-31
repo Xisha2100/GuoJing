@@ -42,7 +42,7 @@ export function HelpRequestPanel({ onUnauthorized }: HelpRequestPanelProps) {
           <p className="eyebrow">家属协助</p>
           <h2 id="help-title">求助处理</h2>
           <p className="muted">
-            这里只展示状态摘要，不展示截图、问题正文或 OCR。
+            这里只展示状态摘要和用户问题，不展示截图或 OCR。
           </p>
         </div>
         <div>
@@ -76,6 +76,7 @@ export function HelpRequestPanel({ onUnauthorized }: HelpRequestPanelProps) {
             <article className="workspace-card" key={item.request_id}>
               <span className="status-pill">{item.processing_status}</span>
               <h3>{item.intent}</h3>
+              {item.question !== null && <p>{item.question}</p>}
               <p className="workspace-id">{item.request_id}</p>
               {item.human_review_reason !== null && (
                 <p>{item.human_review_reason}</p>

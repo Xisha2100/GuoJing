@@ -26,7 +26,7 @@ class HelpRequestWorkerClaimer:
         self._lease_duration = lease_duration
 
     def claim(self, worker_id: str, now: datetime) -> WorkerClaim | None:
-        request = self._queue.next_received()
+        request = self._queue.next_pending()
         if request is None:
             return None
         return WorkerClaim(request, ProcessingLease(worker_id, now, now + self._lease_duration))

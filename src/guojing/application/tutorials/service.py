@@ -1,13 +1,20 @@
 """Tutorial authoring and publication use cases."""
 
+from typing import Protocol, cast
+
 from guojing.application.tutorials.models import (
     PublishedTutorial,
     PublishedTutorialSummary,
     TutorialRevision,
 )
 from guojing.application.tutorials.ports import TutorialRepository
+from guojing.application.tutorials.readiness import assess_readiness
 from guojing.domain.tutorials.models import TutorialGraph
 from guojing.domain.tutorials.validation import require_valid_tutorial_graph
+
+
+class _TutorialRevisionReader(Protocol):
+    def get_revision(self, graph_id: str, revision_number: int) -> TutorialRevision: ...
 
 
 class TutorialService:
@@ -25,6 +32,13 @@ class TutorialService:
         """Publish an explicitly selected revision."""
         if revision_number < 1:
             raise ValueError("revision_number must be positive")
+        reader = cast(_TutorialRevisionReader, self._repository)
+        revision = reader.get_revision(graph_id, revision_number)
+        readiness = assess_readiness(revision.graph)
+        if not readiness.ready:
+            raise ValueError(
+                "tutorial revision is not release-ready: " + "; ".join(readiness.reasons)
+            )
         return self._repository.publish_revision(graph_id, revision_number)
 
     def list_published(self) -> tuple[PublishedTutorialSummary, ...]:

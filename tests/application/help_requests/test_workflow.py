@@ -23,6 +23,7 @@ from guojing.domain.evidence import (
     EvidenceSharingPolicy,
     EvidenceSource,
 )
+from guojing.domain.help_requests import HelpRequestProcessingStatus
 from guojing.domain.tutorials.models import (
     AnchorRole,
     AppIdentity,
@@ -201,3 +202,19 @@ def test_workflow_replays_terminal_request_without_restarting_it() -> None:
 
     assert replayed.stage is HelpRequestWorkflowStage.COMPLETED
     assert replayed.result.guidance is not None
+
+
+def test_stale_processing_without_evidence_is_recovered_to_human_review() -> None:
+    now = [datetime(2026, 8, 30, 8, 0, tzinfo=UTC)]
+    help_service = HelpRequestService(clock=lambda: now[0])
+    receipt = help_service.accept(_request())
+    workflow, _ = _workflow(help_service)
+
+    waiting = workflow.run(receipt.request_id)
+    assert waiting.result.processing_status is HelpRequestProcessingStatus.PROCESSING
+
+    now[0] += timedelta(minutes=3)
+    recovered = workflow.run(receipt.request_id)
+
+    assert recovered.stage is HelpRequestWorkflowStage.NEEDS_HUMAN_REVIEW
+    assert recovered.result.human_review_reason == "等待页面证据超时, 已转人工复核."

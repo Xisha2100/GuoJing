@@ -56,6 +56,7 @@ class TutorialDetailViewModel(
 
     fun startTutorial() {
         val content = mutableUiState.value as? TutorialDetailUiState.Content ?: return
+        if (!content.tutorial.safetyPresentation().canStart) return
         val engine = TutorialExecutionEngine(content.tutorial.graph)
         executionEngine = engine
         val stage = engine.start()

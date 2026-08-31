@@ -10,7 +10,12 @@ from guojing.domain.tutorials.matching import (
     ScreenObservation,
     match_screen,
 )
-from guojing.domain.tutorials.models import AppIdentity, TutorialGraph, TutorialNode
+from guojing.domain.tutorials.models import (
+    AppIdentity,
+    NormalizedBounds,
+    TutorialGraph,
+    TutorialNode,
+)
 
 
 def test_matching_accepts_strong_semantic_and_structural_evidence(
@@ -132,6 +137,26 @@ def test_optional_anchor_can_disappear_without_invalidating_screen(
 
     assert result.status is ScreenMatchStatus.MATCHED
     assert result.matched_optional == ()
+
+
+def test_matching_checks_relative_constraints_when_bounds_are_available(
+    tutorial_graph: TutorialGraph,
+    chat_list_node: TutorialNode,
+    recorded_app: AppIdentity,
+) -> None:
+    observation = ScreenObservation(
+        app=recorded_app,
+        anchor_evidence=(
+            AnchorEvidence("chat_tab", 1, NormalizedBounds(0.1, 0.7, 0.9, 0.8)),
+            AnchorEvidence("family_chat", 1, NormalizedBounds(0.1, 0.85, 0.9, 0.95)),
+        ),
+        structure_score=1,
+    )
+
+    result = match_screen(tutorial_graph, chat_list_node, observation)
+
+    assert result.status is ScreenMatchStatus.UNCERTAIN
+    assert result.reasons == (ScreenMatchReason.RELATIVE_CONSTRAINT_FAILED,)
 
 
 def test_match_evidence_rejects_non_finite_confidence() -> None:

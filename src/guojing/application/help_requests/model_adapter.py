@@ -45,6 +45,7 @@ class ModelGuidanceContext:
     task: str
     safety_rules: tuple[str, ...]
     deadline_at: datetime
+    question: str | None = None
 
     def __post_init__(self) -> None:
         if not self.task.strip():
@@ -53,6 +54,8 @@ class ModelGuidanceContext:
             raise ValueError("model safety_rules must be non-empty")
         if self.deadline_at.tzinfo is None:
             raise ValueError("model deadline_at must be timezone-aware")
+        if self.question is not None and (not self.question.strip() or len(self.question) > 300):
+            raise ValueError("model question must contain 1 to 300 characters when present")
 
 
 class GuidanceModel(Protocol):
@@ -166,6 +169,7 @@ class SafeGuidanceModelProcessor:
             task=GENERAL_GUIDANCE_TASK,
             safety_rules=GENERAL_GUIDANCE_RULES,
             deadline_at=now + self._model_timeout,
+            question=request.question,
         )
         if not self._call_slot.acquire(blocking=False):
             return _review_outcome("模型仍在处理上一项请求, 已转人工复核.")

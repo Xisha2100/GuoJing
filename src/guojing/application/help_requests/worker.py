@@ -24,7 +24,7 @@ class HelpRequestWorker:
         states: list[HelpRequestWorkflowState] = []
         processed_ids: set[UUID] = set()
         for _ in range(limit):
-            request = self._queue.next_received()
+            request = self._queue.next_pending()
             if request is None:
                 break
             if request.request_id in processed_ids:

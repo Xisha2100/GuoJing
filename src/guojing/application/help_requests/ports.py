@@ -15,6 +15,10 @@ class HelpRequestStateConflictError(ValueError):
     """Raised when another worker has already changed a help-request result."""
 
 
+class HelpRequestCapacityError(RuntimeError):
+    """Raised when the bounded queue has no safely evictable result."""
+
+
 class HelpRequestRepository(Protocol):
     """Store only bounded result metadata, never the submitted image bytes."""
 

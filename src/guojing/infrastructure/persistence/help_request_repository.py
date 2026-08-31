@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from guojing.application.help_requests.ports import (
     ClientRequestConflictError,
+    HelpRequestCapacityError,
     HelpRequestStateConflictError,
 )
 from guojing.domain.help_requests import (
@@ -54,18 +55,26 @@ class SqlAlchemyHelpRequestRepository:
                 )
                 if existing is not None:
                     existing_result = _existing_or_conflict(existing, fingerprint)
-                    existing.access_token_digest = access_token_digest
+                    _append_access_token_digest(existing, access_token_digest)
                     return existing_result
                 session.add(_to_record(result, fingerprint, expires_at, access_token_digest))
                 session.flush()
                 _evict_if_full(session, self._max_results)
         except IntegrityError as error:
-            existing_after_race = self._get_by_client_request_id(
-                result.client_request_id,
-                now,
-            )
-            if existing_after_race is not None:
-                return _existing_or_conflict(existing_after_race[0], fingerprint)
+            # A concurrent idempotent submission may win the unique-key race.
+            # Re-open a transaction and append this receipt's digest so either
+            # caller can finish polling even when responses arrive out of order.
+            with self._database.new_session() as session, session.begin():
+                _purge_expired(session, now)
+                existing = session.scalar(
+                    select(HelpRequestResultRecord).where(
+                        HelpRequestResultRecord.client_request_id == str(result.client_request_id),
+                    )
+                )
+                if existing is not None:
+                    existing_result = _existing_or_conflict(existing, fingerprint)
+                    _append_access_token_digest(existing, access_token_digest)
+                    return existing_result
             raise error
         return result
 
@@ -84,7 +93,7 @@ class SqlAlchemyHelpRequestRepository:
         with self._database.new_session() as session, session.begin():
             _purge_expired(session, now)
             record = session.get(HelpRequestResultRecord, str(request_id))
-            return record is not None and record.access_token_digest == access_token_digest
+            return record is not None and access_token_digest in _access_token_digests(record)
 
     def list(
         self,
@@ -121,20 +130,6 @@ class SqlAlchemyHelpRequestRepository:
                     "help request result was updated by another worker",
                 )
 
-    def _get_by_client_request_id(
-        self,
-        client_request_id: UUID,
-        now: datetime,
-    ) -> tuple[HelpRequestResultRecord, str] | None:
-        with self._database.new_session() as session, session.begin():
-            _purge_expired(session, now)
-            record = session.scalar(
-                select(HelpRequestResultRecord).where(
-                    HelpRequestResultRecord.client_request_id == str(client_request_id),
-                )
-            )
-            return (record, record.request_fingerprint) if record is not None else None
-
 
 def _to_record(
     result: HelpRequestResult,
@@ -147,7 +142,9 @@ def _to_record(
         client_request_id=str(result.client_request_id),
         request_fingerprint=fingerprint,
         access_token_digest=access_token_digest,
+        access_token_digests_json=json.dumps([access_token_digest]),
         intent=result.intent.value,
+        question=result.question,
         processing_route=result.processing_route.value,
         processing_status=result.processing_status.value,
         received_at=result.received_at,
@@ -188,6 +185,7 @@ def _from_record(record: HelpRequestResultRecord) -> HelpRequestResult:
         processing_status=HelpRequestProcessingStatus(record.processing_status),
         received_at=as_utc(record.received_at),
         updated_at=as_utc(record.updated_at),
+        question=record.question,
         state_version=record.state_version,
         guidance=guidance,
         human_review_reason=record.human_review_reason,
@@ -332,6 +330,32 @@ def _existing_or_conflict(
     return _from_record(record)
 
 
+def _append_access_token_digest(
+    record: HelpRequestResultRecord,
+    digest: str,
+    *,
+    limit: int = 8,
+) -> None:
+    digests = _access_token_digests(record)
+    if digest not in digests:
+        digests = (*digests, digest)[-limit:]
+    record.access_token_digest = digests[-1]
+    record.access_token_digests_json = json.dumps(
+        list(digests), ensure_ascii=False, separators=(",", ":")
+    )
+
+
+def _access_token_digests(record: HelpRequestResultRecord) -> tuple[str, ...]:
+    if record.access_token_digests_json:
+        try:
+            values = json.loads(record.access_token_digests_json)
+        except json.JSONDecodeError:
+            values = []
+        if isinstance(values, list) and all(isinstance(value, str) for value in values):
+            return tuple(values)
+    return (record.access_token_digest,)
+
+
 def _purge_expired(session: Session, now: datetime) -> None:
     session.execute(
         delete(HelpRequestResultRecord).where(
@@ -347,8 +371,16 @@ def _evict_if_full(session: Session, max_results: int) -> None:
     excess = count - max_results
     oldest = session.scalars(
         select(HelpRequestResultRecord)
+        .where(
+            HelpRequestResultRecord.processing_status
+            == HelpRequestProcessingStatus.GUIDANCE_READY.value,
+        )
         .order_by(HelpRequestResultRecord.updated_at.asc())
         .limit(excess)
     ).all()
+    if len(oldest) < excess:
+        raise HelpRequestCapacityError(
+            "help request capacity is full; active requests are never evicted",
+        )
     for record in oldest:
         session.delete(record)

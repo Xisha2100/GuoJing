@@ -2,6 +2,8 @@ package com.xisha.guojing.ui.help
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.SavedStateHandle
+import androidx.lifecycle.createSavedStateHandle
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
@@ -9,6 +11,8 @@ import com.xisha.guojing.data.DisabledHelpRequestStatusReader
 import com.xisha.guojing.data.DisabledHelpRequestSender
 import com.xisha.guojing.data.HelpRequestIntent
 import com.xisha.guojing.data.HelpRequestFormatException
+import com.xisha.guojing.data.HelpRequestProcessingStatus
+import com.xisha.guojing.data.HelpRequestReceipt
 import com.xisha.guojing.data.HelpRequestSender
 import com.xisha.guojing.data.HelpRequestStatusReader
 import com.xisha.guojing.data.HelpRequestSubmission
@@ -17,7 +21,9 @@ import com.xisha.guojing.observation.ScreenshotOcrProvider
 import com.xisha.guojing.privacy.InMemoryScreenshot
 import com.xisha.guojing.privacy.NormalizedRedaction
 import com.xisha.guojing.privacy.OcrPrivacySuggestionClassifier
+import com.xisha.guojing.privacy.PlaintextReceiptCipher
 import com.xisha.guojing.privacy.PrivacySuggestionDecision
+import com.xisha.guojing.privacy.ReceiptCipher
 import com.xisha.guojing.privacy.ScreenshotPrivacyProcessor
 import com.xisha.guojing.privacy.ScreenshotSanitizationReceipt
 import kotlinx.coroutines.CancellationException
@@ -27,6 +33,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import java.util.Base64
 import java.util.UUID
 
 class ScreenshotHelpViewModel(
@@ -36,9 +43,11 @@ class ScreenshotHelpViewModel(
     private val suggestionClassifier: OcrPrivacySuggestionClassifier =
         OcrPrivacySuggestionClassifier(),
     private val statusReader: HelpRequestStatusReader = DisabledHelpRequestStatusReader,
+    private val savedStateHandle: SavedStateHandle = SavedStateHandle(),
+    private val receiptCipher: ReceiptCipher = PlaintextReceiptCipher,
 ) : ViewModel() {
     private val mutableUiState = MutableStateFlow<ScreenshotHelpUiState>(
-        ScreenshotHelpUiState.AwaitingSelection(),
+        restoreSubmitted() ?: ScreenshotHelpUiState.AwaitingSelection(),
     )
     val uiState: StateFlow<ScreenshotHelpUiState> = mutableUiState.asStateFlow()
 
@@ -48,6 +57,7 @@ class ScreenshotHelpViewModel(
         if (uriString.isBlank()) return
         processingJob?.cancel()
         clearCurrentImage()
+        clearPersistedReceipt()
         mutableUiState.value = ScreenshotHelpUiState.Importing
         processingJob = viewModelScope.launch {
             var imported: InMemoryScreenshot? = null
@@ -245,13 +255,22 @@ class ScreenshotHelpViewModel(
                 )
                 ensureActive()
                 ready.screenshot.erase()
-                mutableUiState.value = ScreenshotHelpUiState.Submitted(
+                val submitted = ScreenshotHelpUiState.Submitted(
                     question = ready.question,
                     receipt = ready.receipt,
                     intent = ready.intent,
                     serverReceipt = serverReceipt,
                     processingStatus = serverReceipt.processingStatus,
                 )
+                mutableUiState.value = submitted
+                runCatching {
+                    persistReceipt(
+                        question = ready.question,
+                        sanitizationReceipt = ready.receipt,
+                        intent = ready.intent,
+                        serverReceipt = serverReceipt,
+                    )
+                }
             } catch (error: CancellationException) {
                 throw error
             } catch (_: Exception) {
@@ -312,6 +331,7 @@ class ScreenshotHelpViewModel(
         processingJob?.cancel()
         processingJob = null
         clearCurrentImage()
+        clearPersistedReceipt()
         mutableUiState.value = ScreenshotHelpUiState.AwaitingSelection()
     }
 
@@ -328,6 +348,73 @@ class ScreenshotHelpViewModel(
         }
     }
 
+    private fun persistReceipt(
+        question: String,
+        sanitizationReceipt: ScreenshotSanitizationReceipt,
+        intent: HelpRequestIntent,
+        serverReceipt: HelpRequestReceipt,
+    ) {
+        val fields = listOf(
+            question,
+            sanitizationReceipt.redactionCount.toString(),
+            sanitizationReceipt.noSensitiveContentConfirmed.toString(),
+            sanitizationReceipt.sanitizedSha256,
+            intent.wireValue,
+            serverReceipt.requestId,
+            serverReceipt.clientRequestId,
+            serverReceipt.processingRoute,
+            serverReceipt.processingStatus.wireValue,
+            serverReceipt.statusEndpoint,
+            serverReceipt.accessToken,
+        ).map(::encodeField)
+        savedStateHandle[KEY_ENCRYPTED_RECEIPT] = receiptCipher.encrypt(fields.joinToString("|"))
+    }
+
+    private fun restoreSubmitted(): ScreenshotHelpUiState.Submitted? {
+        return try {
+            val encoded = savedStateHandle.get<String>(KEY_ENCRYPTED_RECEIPT) ?: return null
+            val fields = receiptCipher.decrypt(encoded)?.split("|")?.map(::decodeField)
+                ?: return null
+            if (fields.size != RECEIPT_FIELD_COUNT) return null
+            val question = fields[0]
+            val intent = HelpRequestIntent.fromWire(fields[4])
+            val status = HelpRequestProcessingStatus.fromWire(fields[8])
+            val receipt = ScreenshotSanitizationReceipt(
+                redactionCount = fields[1].toInt(),
+                noSensitiveContentConfirmed = fields[2].toBooleanStrict(),
+                sanitizedSha256 = fields[3],
+            )
+            ScreenshotHelpUiState.Submitted(
+                question = question,
+                receipt = receipt,
+                intent = intent,
+                serverReceipt = HelpRequestReceipt(
+                    requestId = fields[5],
+                    clientRequestId = fields[6],
+                    intent = intent,
+                    processingRoute = fields[7],
+                    processingStatus = status,
+                    statusEndpoint = fields[9],
+                    accessToken = fields[10],
+                ),
+                processingStatus = status,
+            )
+        } catch (_: Exception) {
+            clearPersistedReceipt()
+            null
+        }
+    }
+
+    private fun clearPersistedReceipt() {
+        savedStateHandle.remove<Any>(KEY_ENCRYPTED_RECEIPT)
+    }
+
+    private fun encodeField(value: String): String =
+        Base64.getUrlEncoder().withoutPadding().encodeToString(value.toByteArray(Charsets.UTF_8))
+
+    private fun decodeField(value: String): String =
+        String(Base64.getUrlDecoder().decode(value), Charsets.UTF_8)
+
     override fun onCleared() {
         processingJob?.cancel()
         clearCurrentImage()
@@ -340,6 +427,7 @@ class ScreenshotHelpViewModel(
             sender: HelpRequestSender = DisabledHelpRequestSender,
             ocrProvider: ScreenshotOcrProvider = DisabledScreenshotOcrProvider,
             statusReader: HelpRequestStatusReader = DisabledHelpRequestStatusReader,
+            receiptCipher: ReceiptCipher = PlaintextReceiptCipher,
         ): ViewModelProvider.Factory =
             viewModelFactory {
                 initializer {
@@ -348,11 +436,15 @@ class ScreenshotHelpViewModel(
                         sender = sender,
                         ocrProvider = ocrProvider,
                         statusReader = statusReader,
+                        savedStateHandle = createSavedStateHandle(),
+                        receiptCipher = receiptCipher,
                     )
                 }
             }
 
         private const val MAX_QUESTION_LENGTH = 300
         private const val MAX_REDACTIONS = 20
+        private const val KEY_ENCRYPTED_RECEIPT = "help.encrypted_receipt"
+        private const val RECEIPT_FIELD_COUNT = 11
     }
 }

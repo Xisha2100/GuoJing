@@ -17,6 +17,7 @@ from guojing.application.help_requests.evidence_service import (
 )
 from guojing.application.help_requests.models import HelpRequestReceipt
 from guojing.application.help_requests.service import (
+    HelpRequestCapacityExceeded,
     HelpRequestNotFound,
     HelpRequestService,
     InvalidHelpRequestPayload,
@@ -264,7 +265,6 @@ class EvidenceBoundsResponse(BaseModel):
     bottom: float
 
     @classmethod
-    @classmethod
     def from_domain(cls, value: EvidenceBounds) -> "EvidenceBoundsResponse":
         return cls(
             left=value.left,
@@ -353,6 +353,12 @@ def submit_help_request(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=str(error),
+        ) from error
+    except HelpRequestCapacityExceeded as error:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="help request queue is temporarily full; please retry later",
+            headers={"Retry-After": "30"},
         ) from error
 
 

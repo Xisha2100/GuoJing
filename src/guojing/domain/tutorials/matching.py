@@ -7,6 +7,8 @@ from math import isfinite
 from guojing.domain.tutorials.models import (
     AnchorRole,
     AppIdentity,
+    NormalizedBounds,
+    RelativePosition,
     ScreenAnchor,
     TutorialGraph,
     TutorialNode,
@@ -19,6 +21,7 @@ class AnchorEvidence:
 
     anchor_id: str
     confidence: float
+    normalized_bounds: NormalizedBounds | None = None
 
     def __post_init__(self) -> None:
         if not self.anchor_id.strip():
@@ -85,6 +88,7 @@ class ScreenMatchReason(StrEnum):
     FORBIDDEN_ANCHOR_PRESENT = "forbidden_anchor_present"
     REQUIRED_ANCHOR_MISSING = "required_anchor_missing"
     SCORE_BELOW_THRESHOLD = "score_below_threshold"
+    RELATIVE_CONSTRAINT_FAILED = "relative_constraint_failed"
 
 
 @dataclass(frozen=True, slots=True)
@@ -126,20 +130,38 @@ def match_screen(
         )
 
     confidence_by_anchor: dict[str, float] = {}
+    bounds_by_anchor: dict[str, NormalizedBounds] = {}
     for evidence in observation.anchor_evidence:
         previous = confidence_by_anchor.get(evidence.anchor_id, 0)
         confidence_by_anchor[evidence.anchor_id] = max(previous, evidence.confidence)
+        if evidence.normalized_bounds is not None:
+            bounds_by_anchor[evidence.anchor_id] = evidence.normalized_bounds
 
     required = tuple(anchor for anchor in node.anchors if anchor.role is AnchorRole.REQUIRED)
     optional = tuple(anchor for anchor in node.anchors if anchor.role is AnchorRole.OPTIONAL)
     forbidden = tuple(anchor for anchor in node.anchors if anchor.role is AnchorRole.FORBIDDEN)
 
-    matched_required = _present_anchor_ids(required, confidence_by_anchor, policy)
+    matched_required, failed_required = _present_anchor_ids(
+        required,
+        confidence_by_anchor,
+        bounds_by_anchor,
+        policy,
+    )
     missing_required = tuple(
         anchor.anchor_id for anchor in required if anchor.anchor_id not in matched_required
     )
-    matched_optional = _present_anchor_ids(optional, confidence_by_anchor, policy)
-    matched_forbidden = _present_anchor_ids(forbidden, confidence_by_anchor, policy)
+    matched_optional, failed_optional = _present_anchor_ids(
+        optional,
+        confidence_by_anchor,
+        bounds_by_anchor,
+        policy,
+    )
+    matched_forbidden, _ = _present_anchor_ids(
+        forbidden,
+        confidence_by_anchor,
+        bounds_by_anchor,
+        policy,
+    )
 
     if matched_forbidden:
         return ScreenMatchResult(
@@ -168,7 +190,24 @@ def match_screen(
             missing_required=missing_required,
             matched_optional=matched_optional,
             matched_forbidden=(),
-            reasons=(ScreenMatchReason.REQUIRED_ANCHOR_MISSING,),
+            reasons=(
+                (
+                    ScreenMatchReason.RELATIVE_CONSTRAINT_FAILED
+                    if failed_required
+                    else ScreenMatchReason.REQUIRED_ANCHOR_MISSING
+                ),
+            ),
+        )
+
+    if failed_required or failed_optional:
+        return ScreenMatchResult(
+            status=ScreenMatchStatus.UNCERTAIN,
+            score=score,
+            matched_required=matched_required,
+            missing_required=(),
+            matched_optional=matched_optional,
+            matched_forbidden=(),
+            reasons=(ScreenMatchReason.RELATIVE_CONSTRAINT_FAILED,),
         )
 
     if score < policy.matched_score_threshold:
@@ -196,13 +235,67 @@ def match_screen(
 def _present_anchor_ids(
     anchors: tuple[ScreenAnchor, ...],
     confidence_by_anchor: dict[str, float],
+    bounds_by_anchor: dict[str, NormalizedBounds],
     policy: MatchPolicy,
-) -> tuple[str, ...]:
+) -> tuple[tuple[str, ...], bool]:
     present: list[str] = []
+    failed_constraints = False
     for anchor in anchors:
         if confidence_by_anchor.get(anchor.anchor_id, 0) >= policy.anchor_presence_threshold:
-            present.append(anchor.anchor_id)
-    return tuple(present)
+            if _relative_constraints_satisfied(anchor, bounds_by_anchor):
+                present.append(anchor.anchor_id)
+            elif anchor.relative_constraints:
+                failed_constraints = True
+    return tuple(present), failed_constraints
+
+
+def _relative_constraints_satisfied(
+    anchor: ScreenAnchor,
+    bounds_by_anchor: dict[str, NormalizedBounds],
+) -> bool:
+    if not anchor.relative_constraints:
+        return True
+    bounds = bounds_by_anchor.get(anchor.anchor_id)
+    if bounds is None:
+        # Older accessibility producers may provide confidence without bounds;
+        # preserve their semantic signal and enforce geometry whenever it is
+        # actually available from both anchors.
+        return True
+    for constraint in anchor.relative_constraints:
+        reference = bounds_by_anchor.get(constraint.reference_anchor_id)
+        if reference is None:
+            continue
+        if not _satisfies_position(bounds, reference, constraint.position):
+            return False
+    return True
+
+
+def _satisfies_position(
+    bounds: NormalizedBounds,
+    reference: NormalizedBounds,
+    position: RelativePosition,
+) -> bool:
+    tolerance = 0.02
+    if position is RelativePosition.LEFT_OF:
+        return bounds.right <= reference.left + tolerance
+    if position is RelativePosition.RIGHT_OF:
+        return bounds.left + tolerance >= reference.right
+    if position is RelativePosition.ABOVE:
+        return bounds.bottom <= reference.top + tolerance
+    if position is RelativePosition.BELOW:
+        return bounds.top + tolerance >= reference.bottom
+    if position is RelativePosition.INSIDE:
+        return (
+            bounds.left >= reference.left - tolerance
+            and bounds.right <= reference.right + tolerance
+            and bounds.top >= reference.top - tolerance
+            and bounds.bottom <= reference.bottom + tolerance
+        )
+    center_x = (bounds.left + bounds.right) / 2
+    center_y = (bounds.top + bounds.bottom) / 2
+    reference_x = (reference.left + reference.right) / 2
+    reference_y = (reference.top + reference.bottom) / 2
+    return abs(center_x - reference_x) <= 0.25 and abs(center_y - reference_y) <= 0.25
 
 
 def _average_confidence(

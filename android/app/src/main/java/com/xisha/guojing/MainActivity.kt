@@ -19,6 +19,7 @@ import com.xisha.guojing.observation.AccessibilityObservationCoordinator
 import com.xisha.guojing.observation.MlKitScreenshotOcrProvider
 import com.xisha.guojing.observation.isPageObservationServiceEnabled
 import com.xisha.guojing.privacy.AndroidScreenshotPrivacyProcessor
+import com.xisha.guojing.privacy.AndroidKeystoreReceiptCipher
 import com.xisha.guojing.ui.GuoJingApp
 import com.xisha.guojing.ui.theme.GuoJingTheme
 
@@ -47,6 +48,9 @@ class MainActivity : ComponentActivity() {
     private val screenshotOcrProvider by lazy {
         MlKitScreenshotOcrProvider()
     }
+    private val receiptCipher by lazy {
+        AndroidKeystoreReceiptCipher()
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -63,6 +67,7 @@ class MainActivity : ComponentActivity() {
                     helpRequestSender = helpRequestSender,
                     helpRequestStatusReader = helpRequestStatusReader,
                     screenshotOcrProvider = screenshotOcrProvider,
+                    receiptCipher = receiptCipher,
                     pageObservationServiceEnabled = pageObservationServiceEnabled,
                     onOpenAccessibilitySettings = {
                         startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))

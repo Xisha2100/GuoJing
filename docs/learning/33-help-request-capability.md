@@ -6,7 +6,7 @@
 
 ## 设计
 
-创建求助时服务端随机生成 `access_token`，只在 `202` 收据中返回一次；数据库只保存 SHA-256 digest。Android 将 token 保留在当前 `HelpRequestReceipt`，并在以下请求使用 `X-Help-Request-Token`：
+创建求助时服务端随机生成 `access_token`，只在 `202` 收据中返回一次；数据库保存有限窗口内的 SHA-256 digest 列表（兼容旧的单 digest 字段）。Android 将 token 保留在当前 `HelpRequestReceipt`，并在以下请求使用 `X-Help-Request-Token`：
 
 - 上传 Evidence Envelope；
 - 读取最新 Evidence；
@@ -14,7 +14,7 @@
 
 令牌与求助的 TTL 一起过期。无令牌或错误令牌一律返回 `404`，不泄露请求是否真实存在。管理员 API 继续采用 Session + CSRF，不混用客户端 capability。
 
-重复提交同一 `client_request_id` 会轮换 capability：这让“服务端已接收但 Android 未收到响应”的重试能取得新的凭证，同时旧凭证自动失效。迁移会清理模块 33 前的存量请求，因为它们无法被安全归属。
+重复提交同一 `client_request_id` 会追加一个短期重叠 capability：这让“服务端已接收但 Android 未收到响应”的重试能取得新的凭证，同时乱序返回的旧凭证仍可用；窗口上限避免摘要无限增长。
 
 ## Java 对照
 

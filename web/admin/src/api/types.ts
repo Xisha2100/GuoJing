@@ -74,6 +74,7 @@ export interface HelpRequestReview {
   intent: string;
   processing_route: string;
   processing_status: string;
+  question: string | null;
   received_at: string;
   updated_at: string;
   human_review_reason: string | null;

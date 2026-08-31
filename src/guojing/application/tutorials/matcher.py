@@ -14,7 +14,7 @@ from guojing.domain.tutorials.matching import (
     ScreenObservation,
     match_screen,
 )
-from guojing.domain.tutorials.models import AppIdentity, TutorialNode
+from guojing.domain.tutorials.models import AppIdentity, NormalizedBounds, TutorialNode
 
 
 class TutorialMatchStatus(StrEnum):
@@ -125,7 +125,21 @@ def _to_observation(envelope: EvidenceEnvelope) -> ScreenObservation:
             version_code=envelope.version_code,
         ),
         anchor_evidence=tuple(
-            AnchorEvidence(anchor.anchor_id, anchor.confidence) for anchor in envelope.anchors
+            AnchorEvidence(
+                anchor.anchor_id,
+                anchor.confidence,
+                (
+                    NormalizedBounds(
+                        left=anchor.normalized_bounds.left,
+                        top=anchor.normalized_bounds.top,
+                        right=anchor.normalized_bounds.right,
+                        bottom=anchor.normalized_bounds.bottom,
+                    )
+                    if anchor.normalized_bounds is not None
+                    else None
+                ),
+            )
+            for anchor in envelope.anchors
         ),
         structure_score=envelope.structure_score,
     )

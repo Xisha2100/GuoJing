@@ -81,6 +81,7 @@ class ReviewSummary(ReviewApiModel):
     intent: str
     processing_route: str
     processing_status: str
+    question: str | None
     received_at: datetime
     updated_at: datetime
     human_review_reason: str | None
@@ -93,6 +94,7 @@ class ReviewSummary(ReviewApiModel):
             intent=value.intent.value,
             processing_route=value.processing_route.value,
             processing_status=value.processing_status.value,
+            question=value.question,
             received_at=value.received_at,
             updated_at=value.updated_at,
             human_review_reason=value.human_review_reason,
@@ -108,7 +110,7 @@ def list_help_request_reviews(
     _admin: AdminSessionDependency,
     service: HelpRequestServiceDependency,
 ) -> list[ReviewSummary]:
-    """List review metadata without exposing question text or image bytes."""
+    """List bounded review context without exposing image bytes or OCR."""
     return [
         ReviewSummary.from_domain(value)
         for value in service.list_results(
@@ -137,7 +139,7 @@ def process_next_help_requests(
     results: list[HelpRequestResultResponse] = []
     seen: set[UUID] = set()
     for _ in range(request.limit):
-        pending = queue.next_received()
+        pending = queue.next_pending()
         if pending is None or pending.request_id in seen:
             break
         seen.add(pending.request_id)

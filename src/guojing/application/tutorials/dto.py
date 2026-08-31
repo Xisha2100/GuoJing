@@ -29,8 +29,8 @@ class TutorialDto(BaseModel):
 
 
 class AppIdentityDto(TutorialDto):
-    package_name: str = Field(min_length=1)
-    version_name: str = Field(min_length=1)
+    package_name: str = Field(min_length=1, max_length=255)
+    version_name: str = Field(min_length=1, max_length=120)
     version_code: int = Field(ge=1)
 
     def to_domain(self) -> AppIdentity:
@@ -101,7 +101,7 @@ class SemanticLocatorDto(TutorialDto):
 
 
 class RelativeConstraintDto(TutorialDto):
-    reference_anchor_id: str = Field(min_length=1)
+    reference_anchor_id: str = Field(min_length=1, max_length=120)
     position: RelativePosition
 
     def to_domain(self) -> RelativeConstraint:
@@ -119,10 +119,10 @@ class RelativeConstraintDto(TutorialDto):
 
 
 class ScreenAnchorDto(TutorialDto):
-    anchor_id: str = Field(min_length=1)
+    anchor_id: str = Field(min_length=1, max_length=120)
     role: AnchorRole
     locator: SemanticLocatorDto
-    relative_constraints: tuple[RelativeConstraintDto, ...] = ()
+    relative_constraints: tuple[RelativeConstraintDto, ...] = Field(default=(), max_length=16)
     bounds_fallback: NormalizedBoundsDto | None = None
 
     def to_domain(self) -> ScreenAnchor:
@@ -157,9 +157,9 @@ class ScreenAnchorDto(TutorialDto):
 
 
 class TutorialNodeDto(TutorialDto):
-    node_id: str = Field(min_length=1)
-    title: str = Field(min_length=1)
-    anchors: tuple[ScreenAnchorDto, ...]
+    node_id: str = Field(min_length=1, max_length=120)
+    title: str = Field(min_length=1, max_length=160)
+    anchors: tuple[ScreenAnchorDto, ...] = Field(min_length=1, max_length=64)
     privacy_mode: PrivacyMode
     verification_status: VerificationStatus
     last_verified_version_code: int | None = Field(default=None, ge=1)
@@ -187,13 +187,13 @@ class TutorialNodeDto(TutorialDto):
 
 
 class TutorialTransitionDto(TutorialDto):
-    transition_id: str = Field(min_length=1)
-    source_node_id: str = Field(min_length=1)
-    target_node_id: str = Field(min_length=1)
+    transition_id: str = Field(min_length=1, max_length=120)
+    source_node_id: str = Field(min_length=1, max_length=120)
+    target_node_id: str = Field(min_length=1, max_length=120)
     action_kind: ActionKind
-    instruction: str = Field(min_length=1)
+    instruction: str = Field(min_length=1, max_length=500)
     risk_level: RiskLevel
-    target_anchor_id: str | None = Field(default=None, min_length=1)
+    target_anchor_id: str | None = Field(default=None, min_length=1, max_length=120)
 
     def to_domain(self) -> TutorialTransition:
         return TutorialTransition(
@@ -223,12 +223,12 @@ class TutorialGraphDto(TutorialDto):
     """Public tutorial document; schema_version enables future evolution."""
 
     schema_version: Literal["1.0"] = "1.0"
-    graph_id: str = Field(min_length=1)
-    title: str = Field(min_length=1)
+    graph_id: str = Field(min_length=1, max_length=120)
+    title: str = Field(min_length=1, max_length=160)
     recorded_app: AppIdentityDto
     start_node_id: str = Field(min_length=1)
-    nodes: tuple[TutorialNodeDto, ...]
-    transitions: tuple[TutorialTransitionDto, ...]
+    nodes: tuple[TutorialNodeDto, ...] = Field(min_length=1, max_length=128)
+    transitions: tuple[TutorialTransitionDto, ...] = Field(max_length=256)
 
     def to_domain(self) -> TutorialGraph:
         return TutorialGraph(

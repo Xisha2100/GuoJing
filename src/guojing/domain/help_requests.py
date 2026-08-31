@@ -198,6 +198,7 @@ class HelpRequestResult:
     processing_status: HelpRequestProcessingStatus
     received_at: datetime
     updated_at: datetime
+    question: str | None = None
     state_version: int = 1
     guidance: HelpRequestGuidance | None = None
     human_review_reason: str | None = None
@@ -206,6 +207,10 @@ class HelpRequestResult:
     tutorial_plan: HelpRequestTutorialPlan | None = None
 
     def __post_init__(self) -> None:
+        if self.question is not None and (
+            not self.question.strip() or len(self.question) > MAX_QUESTION_LENGTH
+        ):
+            raise ValueError("question must contain 1 to 300 characters when present")
         if self.state_version < 1:
             raise ValueError("state_version must be positive")
         if self.updated_at < self.received_at:
@@ -262,6 +267,7 @@ class HelpRequestResult:
             request_id=self.request_id,
             client_request_id=self.client_request_id,
             intent=self.intent,
+            question=self.question,
             processing_route=self.processing_route,
             processing_status=status,
             received_at=self.received_at,

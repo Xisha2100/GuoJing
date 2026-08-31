@@ -8,7 +8,11 @@ from uuid import uuid4
 import pytest
 
 from guojing.application.help_requests.dto import HelpRequestRequest
-from guojing.application.help_requests.service import HelpRequestNotFound, HelpRequestService
+from guojing.application.help_requests.service import (
+    HelpRequestCapacityExceeded,
+    HelpRequestNotFound,
+    HelpRequestService,
+)
 from guojing.domain.help_requests import (
     HelpRequestGuidance,
     HelpRequestGuidanceStep,
@@ -142,11 +146,10 @@ def test_unknown_result_is_not_exposed() -> None:
 def test_in_memory_results_are_bounded() -> None:
     service = HelpRequestService(max_results=1)
     first = service.accept(_request())
-    second = service.accept(_request())
+    with pytest.raises(HelpRequestCapacityExceeded):
+        service.accept(_request())
 
-    with pytest.raises(HelpRequestNotFound):
-        service.get_result(first.request_id)
-    assert service.get_result(second.request_id).request_id == second.request_id
+    assert service.get_result(first.request_id).request_id == first.request_id
 
 
 def test_processor_exception_is_converted_to_human_review() -> None:

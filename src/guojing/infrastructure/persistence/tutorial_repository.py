@@ -69,6 +69,24 @@ class SqlAlchemyTutorialRepository:
             published_at=published_at,
         )
 
+    def get_revision(self, graph_id: str, revision_number: int) -> TutorialRevision:
+        with self._database.new_session() as session:
+            revision = session.scalar(
+                select(TutorialRevisionRecord).where(
+                    TutorialRevisionRecord.graph_id == graph_id,
+                    TutorialRevisionRecord.revision_number == revision_number,
+                )
+            )
+        if revision is None:
+            raise TutorialNotFoundError(
+                f"tutorial {graph_id!r} revision {revision_number} does not exist"
+            )
+        return TutorialRevision(
+            graph=deserialize_tutorial_graph(revision.graph_json),
+            revision_number=revision.revision_number,
+            created_at=as_utc(revision.created_at),
+        )
+
     def list_published(self) -> tuple[PublishedTutorialSummary, ...]:
         statement = (
             select(TutorialRevisionRecord, TutorialPublicationRecord)
