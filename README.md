@@ -535,7 +535,7 @@ POST /api/v1/admin/help-requests/{request_id}/process
 
 ## 下一步
 
-模块 53 将模板目录和导入操作接入 React 管理台。模块 52 的草稿安全边界仍保留：必须验证、校验和显式发布。
+模块 54 提供有限批次的 MVP worker 处理入口，调用既有工作流推进通用指引或等待教程证据。模板目录和导入操作已接入 React 管理台。
 
 ## License
 
