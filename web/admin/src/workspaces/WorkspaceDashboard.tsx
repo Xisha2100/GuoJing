@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 import { adminApi, isApiError } from "../api/client";
 import type { Workspace, WorkspaceSummary } from "../api/types";
 import { WorkspaceEditor } from "./WorkspaceEditor";
+import { HelpRequestPanel } from "../help/HelpRequestPanel";
 
 interface WorkspaceDashboardProps {
   onUnauthorized: () => void;
@@ -135,88 +136,93 @@ export function WorkspaceDashboard({
   }
 
   return (
-    <section className="dashboard" aria-labelledby="workspace-title">
-      <div className="section-heading">
-        <div>
-          <p className="eyebrow">教程生产</p>
-          <h2 id="workspace-title">教程工作区</h2>
-          <p className="muted">保存未完成内容，校验通过后再提升为正式修订。</p>
+    <>
+      <HelpRequestPanel onUnauthorized={onUnauthorized} />
+      <section className="dashboard" aria-labelledby="workspace-title">
+        <div className="section-heading">
+          <div>
+            <p className="eyebrow">教程生产</p>
+            <h2 id="workspace-title">教程工作区</h2>
+            <p className="muted">
+              保存未完成内容，校验通过后再提升为正式修订。
+            </p>
+          </div>
+          <button
+            className="primary-button"
+            type="button"
+            onClick={() => void createWorkspace()}
+            disabled={creating}
+          >
+            {creating ? "正在新建…" : "＋ 新建工作区"}
+          </button>
         </div>
-        <button
-          className="primary-button"
-          type="button"
-          onClick={() => void createWorkspace()}
-          disabled={creating}
-        >
-          {creating ? "正在新建…" : "＋ 新建工作区"}
-        </button>
-      </div>
 
-      {templates.length > 0 ? (
-        <div className="template-panel" aria-label="教程模板">
-          <p className="eyebrow">快速开始</p>
-          <div className="template-actions">
-            {templates.map((template) => (
-              <button
-                className="secondary-button"
-                type="button"
-                key={template.template_id}
-                disabled={creating}
-                onClick={() => void importTemplate(template.template_id)}
-              >
-                导入 {template.template_id}
-              </button>
+        {templates.length > 0 ? (
+          <div className="template-panel" aria-label="教程模板">
+            <p className="eyebrow">快速开始</p>
+            <div className="template-actions">
+              {templates.map((template) => (
+                <button
+                  className="secondary-button"
+                  type="button"
+                  key={template.template_id}
+                  disabled={creating}
+                  onClick={() => void importTemplate(template.template_id)}
+                >
+                  导入 {template.template_id}
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <button
+            className="secondary-button"
+            type="button"
+            disabled={creating}
+            onClick={() => void loadTemplates()}
+          >
+            从模板开始
+          </button>
+        )}
+
+        {error !== null && (
+          <p className="notice notice-error" role="alert">
+            {error}
+          </p>
+        )}
+        {loading ? (
+          <p className="loading-message">正在读取工作区…</p>
+        ) : workspaces.length === 0 ? (
+          <div className="empty-state">
+            <h3>还没有教程工作区</h3>
+            <p>新建一个空工作区，从目标 APP 和教程标题开始填写。</p>
+          </div>
+        ) : (
+          <div className="workspace-grid">
+            {workspaces.map((workspace) => (
+              <article className="workspace-card" key={workspace.workspace_id}>
+                <div>
+                  <span className="status-pill">版本 {workspace.version}</span>
+                  <h3>{workspace.title ?? "未命名教程"}</h3>
+                  <p className="workspace-id">
+                    {workspace.graph_id ?? workspace.workspace_id}
+                  </p>
+                </div>
+                <div className="card-footer">
+                  <span>{formatTimestamp(workspace.updated_at)}</span>
+                  <button
+                    type="button"
+                    onClick={() => void openWorkspace(workspace.workspace_id)}
+                  >
+                    打开编辑
+                  </button>
+                </div>
+              </article>
             ))}
           </div>
-        </div>
-      ) : (
-        <button
-          className="secondary-button"
-          type="button"
-          disabled={creating}
-          onClick={() => void loadTemplates()}
-        >
-          从模板开始
-        </button>
-      )}
-
-      {error !== null && (
-        <p className="notice notice-error" role="alert">
-          {error}
-        </p>
-      )}
-      {loading ? (
-        <p className="loading-message">正在读取工作区…</p>
-      ) : workspaces.length === 0 ? (
-        <div className="empty-state">
-          <h3>还没有教程工作区</h3>
-          <p>新建一个空工作区，从目标 APP 和教程标题开始填写。</p>
-        </div>
-      ) : (
-        <div className="workspace-grid">
-          {workspaces.map((workspace) => (
-            <article className="workspace-card" key={workspace.workspace_id}>
-              <div>
-                <span className="status-pill">版本 {workspace.version}</span>
-                <h3>{workspace.title ?? "未命名教程"}</h3>
-                <p className="workspace-id">
-                  {workspace.graph_id ?? workspace.workspace_id}
-                </p>
-              </div>
-              <div className="card-footer">
-                <span>{formatTimestamp(workspace.updated_at)}</span>
-                <button
-                  type="button"
-                  onClick={() => void openWorkspace(workspace.workspace_id)}
-                >
-                  打开编辑
-                </button>
-              </div>
-            </article>
-          ))}
-        </div>
-      )}
-    </section>
+        )}
+      </section>
+    </>
   );
 }
 

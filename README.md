@@ -535,7 +535,7 @@ POST /api/v1/admin/help-requests/{request_id}/process
 
 ## 下一步
 
-模块 55 提供受管理员保护的批处理 API，调用既有 worker/工作流推进通用指引或等待教程证据。MVP 可通过一个本地请求驱动后台处理。
+模块 56 将求助摘要和批处理按钮接入 React 管理台。MVP 现在具备“Android 提交 → 后端处理 → 管理网页查看状态”的最小闭环。
 
 ## License
 

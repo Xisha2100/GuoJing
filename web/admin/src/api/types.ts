@@ -67,3 +67,14 @@ export interface Promotion {
 export interface TutorialTemplate {
   template_id: string;
 }
+
+export interface HelpRequestReview {
+  request_id: string;
+  client_request_id: string;
+  intent: string;
+  processing_route: string;
+  processing_status: string;
+  received_at: string;
+  updated_at: string;
+  human_review_reason: string | null;
+}

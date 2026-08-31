@@ -4,6 +4,7 @@ import type {
   Readiness,
   TutorialDraftDocument,
   TutorialTemplate,
+  HelpRequestReview,
   Workspace,
   WorkspaceSummary,
 } from "./types";
@@ -97,6 +98,18 @@ export const adminApi = {
     return request<Workspace>(
       `/tutorial-drafts/from-template/${encodeURIComponent(templateId)}`,
       { method: "POST" },
+      true,
+    );
+  },
+
+  listHelpRequestReviews(): Promise<HelpRequestReview[]> {
+    return request<HelpRequestReview[]>("/help-requests/reviews");
+  },
+
+  processNextHelpRequests(limit = 10): Promise<unknown[]> {
+    return request<unknown[]>(
+      "/help-requests/process-next",
+      { method: "POST", body: JSON.stringify({ limit }) },
       true,
     );
   },
