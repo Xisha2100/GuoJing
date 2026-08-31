@@ -289,6 +289,7 @@ class ScreenshotHelpViewModel(
                     processingStatus = result.processingStatus,
                     workflowStage = result.workflowStage,
                     tutorialMatch = result.tutorialMatch,
+                    tutorialPlan = result.tutorialPlan,
                     guidance = result.guidance,
                     humanReviewReason = result.humanReviewReason,
                     isRefreshingStatus = false,

@@ -535,7 +535,7 @@ POST /api/v1/admin/help-requests/{request_id}/process
 
 ## 下一步
 
-模块 56 将求助摘要和批处理按钮接入 React 管理台。MVP 现在具备“Android 提交 → 后端处理 → 管理网页查看状态”的最小闭环。
+模块 57 将固定教程计划接入 Android 求助结果页。MVP 现在具备“Android 提交 → 后端处理 → 管理网页查看 → Android 展示安全计划”的最小闭环。
 
 ## License
 

@@ -580,6 +580,12 @@ private fun SubmittedContent(
             },
         )
     }
+    state.tutorialPlan?.let { plan ->
+        InfoCard(
+            title = "固定教程计划",
+            body = "版本 ${plan.revisionNumber}，页面 ${plan.nodeId}。仅允许 ${plan.allowedTransitionIds.size} 个低风险步骤；请等待人工确认后亲自操作。",
+        )
+    }
     state.humanReviewReason?.let { reason ->
         InfoCard(
             title = "需要人工复核的原因",

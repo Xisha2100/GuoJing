@@ -5,6 +5,7 @@ import com.xisha.guojing.data.HelpRequestIntent
 import com.xisha.guojing.data.HelpRequestProcessingStatus
 import com.xisha.guojing.data.HelpRequestReceipt
 import com.xisha.guojing.data.HelpRequestTutorialMatch
+import com.xisha.guojing.data.HelpRequestTutorialPlan
 import com.xisha.guojing.data.HelpRequestWorkflowStage
 import com.xisha.guojing.privacy.InMemoryScreenshot
 import com.xisha.guojing.privacy.NormalizedRedaction
@@ -74,6 +75,7 @@ sealed interface ScreenshotHelpUiState {
         val processingStatus: HelpRequestProcessingStatus = serverReceipt.processingStatus,
         val workflowStage: HelpRequestWorkflowStage? = null,
         val tutorialMatch: HelpRequestTutorialMatch? = null,
+        val tutorialPlan: HelpRequestTutorialPlan? = null,
         val guidance: HelpRequestGuidance? = null,
         val humanReviewReason: String? = null,
         val isRefreshingStatus: Boolean = false,
