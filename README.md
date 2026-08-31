@@ -535,7 +535,7 @@ POST /api/v1/admin/help-requests/{request_id}/process
 
 ## 下一步
 
-模块 46 为管理端提供受控模板目录 API。接下来把队列候选与租约规则组合成 worker claim 决策。
+模块 47 将队列候选与租约组合成统一 worker claim。下一步让 Android 展示相机模板的隐私与验证状态。
 
 ## License
 
