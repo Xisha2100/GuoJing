@@ -1,14 +1,12 @@
-"""Typed application configuration loaded from the process environment."""
+"""Typed configuration for the visual guidance agent backend."""
 
 from enum import StrEnum
 
-from pydantic import Field, model_validator
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class AppEnvironment(StrEnum):
-    """Deployment environments with intentionally explicit semantics."""
-
     LOCAL = "local"
     TEST = "test"
     STAGING = "staging"
@@ -26,22 +24,29 @@ class Settings(BaseSettings):
         str_strip_whitespace=True,
     )
 
-    app_name: str = Field(default="老牌子 API", min_length=1)
+    app_name: str = Field(default="老牌子视觉指引 Agent API", min_length=1)
     environment: AppEnvironment = AppEnvironment.LOCAL
     debug: bool = False
     database_url: str = Field(default="sqlite:///./data/guojing.db", min_length=1)
-    admin_cookie_secure: bool = False
-    admin_session_ttl_minutes: int = Field(default=480, ge=15, le=1440)
-    admin_login_window_minutes: int = Field(default=15, ge=1, le=60)
-    admin_maximum_login_failures: int = Field(default=5, ge=1, le=20)
-    help_request_evidence_max_age_minutes: int = Field(default=15, ge=1, le=60)
-    help_request_evidence_ttl_minutes: int = Field(default=10, ge=1, le=30)
-    help_request_evidence_future_skew_seconds: int = Field(default=30, ge=0, le=300)
-    help_request_evidence_max_per_request: int = Field(default=8, ge=1, le=64)
+
+    deepseek_api_key: SecretStr | None = None
+    deepseek_base_url: str = "https://api.deepseek.com"
+    deepseek_vision_model: str = "deepseek-v4-flash-vision-exp"
+    deepseek_model_timeout_seconds: int = Field(default=30, ge=1, le=120)
+
+    agent_run_timeout_seconds: int = Field(default=90, ge=10, le=300)
+    agent_max_concurrency: int = Field(default=4, ge=1, le=16)
+    agent_queue_capacity: int = Field(default=20, ge=1, le=100)
+    agent_confidence_threshold: float = Field(default=0.70, ge=0.0, le=1.0)
+    agent_session_ttl_hours: int = Field(default=24, ge=1, le=168)
+
+    sandbox_docker_host: str | None = None
+    sandbox_image: str = "python:3.12-slim"
+    sandbox_idle_ttl_seconds: int = Field(default=600, ge=60, le=3600)
 
     @model_validator(mode="after")
-    def require_secure_admin_cookie_outside_local_environments(self) -> "Settings":
+    def require_model_key_for_deployed_environments(self) -> "Settings":
         if self.environment in {AppEnvironment.STAGING, AppEnvironment.PRODUCTION}:
-            if not self.admin_cookie_secure:
-                raise ValueError("admin_cookie_secure must be true in staging and production")
+            if self.deepseek_api_key is None:
+                raise ValueError("deepseek_api_key is required outside local and test")
         return self

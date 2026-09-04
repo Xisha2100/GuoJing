@@ -4,7 +4,7 @@
 
 The Python backend uses a `src` layout. Place importable code under `src/guojing/`, mirror it under `tests/`, and keep module learning notes under `docs/learning/`. Keep the root `README.md` aligned with the implemented project state and record each completed module in the learning documentation.
 
-The React management app lives under `web/admin/`. Keep browser API adapters under `src/api/`, feature components in feature folders such as `src/auth/` and `src/workspaces/`, and colocate frontend behavior tests as `*.test.ts` or `*.test.tsx`. Generated `dist`, coverage, Playwright, and TypeScript build-info artifacts remain ignored; track `web/admin/pnpm-lock.yaml`.
+The legacy React management app has been removed. Do not recreate tutorial authoring, administrator authentication, or human-review features unless a new product decision explicitly restores them.
 
 The Android client lives under `android/app/`. Keep backend protocol and network code under `data/`, immutable client models under `model/`, deterministic tutorial walking and safety rules under `execution/`, local Accessibility adapters and sanitized evidence matching under `observation/`, visible cross-app overlay ports, pure layout planning, and Android window adapters under `guidance/`, session-scoped screenshot import and pixel redaction under `privacy/`, and Compose screens plus ViewModels under feature packages in `ui/`. UI depends on repository, observation, guidance, and privacy ports rather than concrete HTTP or Android Service implementations and must not advance graph state independently of the execution engine. Accessibility collection is session-scoped: check the target package and privacy mode before reading a node tree, never retain raw node text, never traverse in `capture_paused`, and never upload `local_only` evidence. Guidance overlays must be non-touchable, disappear outside the target package or on weak evidence, never perform node actions or gestures, and account for the overlay viewport's system-bar offset when mapping normalized display coordinates. Screenshot intake accepts only user-selected `content://` image URIs, must not retain a URI grant or raw file, bounds decoded dimensions and encoded bytes, replaces selected pixels in a new local copy, and best-effort erases session buffers when replaced or dismissed; no screenshot may cross a network boundary before local sanitization and a separate explicit send decision. Keep Gradle Wrapper files and `gradle/libs.versions.toml` tracked; never commit `local.properties`, `.gradle/`, build outputs, APKs, emulator state, or screenshots.
 
@@ -26,13 +26,6 @@ The backend requires Python 3.12.13 and uv. Keep working setup and validation co
 - `uv lock --check` — verify that `uv.lock` matches `pyproject.toml`.
 - `git diff --check` — detect whitespace errors before committing.
 
-The management web app requires Node.js 22.12 or newer and pnpm 11:
-
-- `pnpm --dir web/admin install --frozen-lockfile` — reproduce frontend dependencies.
-- `pnpm --dir web/admin dev` — run Vite on port 5173 and proxy `/api` to port 8000.
-- `pnpm --dir web/admin check` — run Prettier, ESLint, TypeScript, Vitest, and production build checks.
-- `pnpm --dir web/admin build` — emit production static assets under ignored `web/admin/dist/`.
-
 The Android app requires JDK 17, Android SDK Platform 37, and Build Tools 37.0.0. Use its checked-in Wrapper; do not require a global Gradle or Kotlin installation:
 
 - `cd android && ./gradlew testDebugUnitTest` — run JVM unit tests without a device.
@@ -46,15 +39,11 @@ Use `uv add <package>` or `uv add --dev <package>` to change declared dependenci
 
 Follow PEP 8 with four-space indentation. Use `snake_case` for modules, functions, and variables; `PascalCase` for classes; and `UPPER_SNAKE_CASE` for constants. Add type hints to public interfaces and concise docstrings where intent is not evident. Ruff formatting/linting and strict mypy settings live in `pyproject.toml`.
 
-Frontend TypeScript is strict. Use `PascalCase` for React components, keep network and Cookie behavior inside the typed API client, use semantic HTML and accessible labels, and do not duplicate CSRF logic in feature components. Prettier and ESLint configuration live under `web/admin/`.
-
 Android Kotlin follows standard Kotlin naming and four-space continuation indentation. Keep Compose functions small and state-hoisted, expose immutable `StateFlow` from ViewModels, collect it with lifecycle awareness, and model loading, empty, content, failure, blocked, and completed states explicitly. Parse wire enums and `schema_version` fail-closed. Do not guess a tutorial branch, repeat a cycle without screen evidence, or permit financial/irreversible progress from UI callbacks. AccessibilityService may observe and explain but must not call node actions or dispatch gestures. Debug cleartext exceptions belong only in `src/debug`; release endpoints must use HTTPS.
 
 ## Testing Guidelines
 
 Use pytest and files named `test_*.py`. Name tests after behavior, such as `test_rejects_empty_input`. Mirror source modules in the test tree. Cover normal, boundary, and failure paths, and include regression tests with bug fixes. Backend tests must not require network access, paid models, or a running database unless explicitly marked as integration tests.
-
-Use Vitest and React Testing Library for frontend behavior. Test observable user flows and HTTP contracts rather than component implementation details. Real-browser Playwright checks are a local integration/visual gate and must use temporary data; do not commit their generated artifacts.
 
 Use JUnit for Android JVM tests and Compose UI Test for device behavior. JSON contracts, repositories, execution policy, and ViewModels must remain testable without Android runtime or network access. Cover every new execution block reason with a pure JVM test. Run device tests for user-visible semantics, navigation, and interaction, then inspect a real emulator screenshot for major layout changes; do not commit generated screenshots unless explicitly requested as product documentation.
 

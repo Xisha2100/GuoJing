@@ -1,18 +1,8 @@
-"""SQLAlchemy mappings for tutorial persistence."""
+"""SQLAlchemy mappings for the visual guidance agent."""
 
 from datetime import datetime
 
-from sqlalchemy import (
-    Boolean,
-    CheckConstraint,
-    DateTime,
-    ForeignKey,
-    ForeignKeyConstraint,
-    Index,
-    String,
-    Text,
-    UniqueConstraint,
-)
+from sqlalchemy import DateTime, Float, ForeignKey, Index, String, Text, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -20,198 +10,72 @@ class Base(DeclarativeBase):
     """Declarative metadata used by Alembic, not runtime create_all."""
 
 
-class TutorialRecord(Base):
-    __tablename__ = "tutorials"
-
-    graph_id: Mapped[str] = mapped_column(String(120), primary_key=True)
-    package_name: Mapped[str] = mapped_column(String(255), nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-
-
-class TutorialRevisionRecord(Base):
-    __tablename__ = "tutorial_revisions"
-    __table_args__ = (
-        UniqueConstraint("graph_id", "revision_number", name="uq_tutorial_revision_number"),
-    )
-
-    revision_id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    graph_id: Mapped[str] = mapped_column(
-        ForeignKey("tutorials.graph_id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    revision_number: Mapped[int] = mapped_column(nullable=False)
-    graph_json: Mapped[str] = mapped_column(Text, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-
-
-class TutorialPublicationRecord(Base):
-    __tablename__ = "tutorial_publications"
-
-    graph_id: Mapped[str] = mapped_column(
-        ForeignKey("tutorials.graph_id", ondelete="CASCADE"),
-        primary_key=True,
-    )
-    revision_id: Mapped[str] = mapped_column(
-        ForeignKey("tutorial_revisions.revision_id", ondelete="RESTRICT"),
-        unique=True,
-        nullable=False,
-    )
-    published_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-
-
-class TutorialDraftWorkspaceRecord(Base):
-    __tablename__ = "tutorial_draft_workspaces"
-    __table_args__ = (
-        ForeignKeyConstraint(
-            ["promoted_graph_id", "promoted_revision_number"],
-            [
-                "tutorial_revisions.graph_id",
-                "tutorial_revisions.revision_number",
-            ],
-            name="fk_draft_workspace_promoted_revision",
-            ondelete="RESTRICT",
-        ),
-        CheckConstraint("version >= 1", name="ck_draft_workspace_positive_version"),
-        CheckConstraint(
-            "(promoted_graph_id IS NULL AND promoted_revision_number IS NULL) OR "
-            "(promoted_graph_id IS NOT NULL AND promoted_revision_number IS NOT NULL)",
-            name="ck_draft_workspace_complete_promotion",
-        ),
-        CheckConstraint(
-            "promoted_revision_number IS NULL OR promoted_revision_number >= 1",
-            name="ck_draft_workspace_positive_promotion_revision",
-        ),
-    )
-
-    workspace_id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    version: Mapped[int] = mapped_column(nullable=False)
-    document_json: Mapped[str] = mapped_column(Text, nullable=False)
-    promoted_graph_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
-    promoted_revision_number: Mapped[int | None] = mapped_column(nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-
-
-class AdminUserRecord(Base):
-    __tablename__ = "admin_users"
-
-    user_id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    username: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
-    password_hash: Mapped[str] = mapped_column(Text, nullable=False)
-    active: Mapped[bool] = mapped_column(Boolean, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-
-
-class AdminSessionRecord(Base):
-    __tablename__ = "admin_sessions"
-    __table_args__ = (CheckConstraint("expires_at > created_at", name="ck_admin_session_expiry"),)
+class AgentSessionRecord(Base):
+    __tablename__ = "agent_sessions"
+    __table_args__ = (Index("ix_agent_session_expires_at", "expires_at"),)
 
     session_id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    admin_user_id: Mapped[str] = mapped_column(
-        ForeignKey("admin_users.user_id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    session_token_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
-    csrf_token_hash: Mapped[str] = mapped_column(String(64), nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-
-
-class AdminLoginAttemptRecord(Base):
-    __tablename__ = "admin_login_attempts"
-    __table_args__ = (Index("ix_admin_login_attempt_username_time", "username", "occurred_at"),)
-
-    attempt_id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    username: Mapped[str] = mapped_column(String(64), nullable=False)
-    succeeded: Mapped[bool] = mapped_column(Boolean, nullable=False)
-    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-
-
-class AdminAuditEventRecord(Base):
-    __tablename__ = "admin_audit_events"
-    __table_args__ = (Index("ix_admin_audit_event_occurred_at", "occurred_at"),)
-
-    event_id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    admin_user_id: Mapped[str | None] = mapped_column(
-        ForeignKey("admin_users.user_id", ondelete="SET NULL"),
-        nullable=True,
-        index=True,
-    )
-    action: Mapped[str] = mapped_column(String(120), nullable=False)
-    resource_type: Mapped[str] = mapped_column(String(120), nullable=False)
-    resource_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    details_json: Mapped[str] = mapped_column(Text, nullable=False)
-
-
-class HelpRequestResultRecord(Base):
-    """Persist lifecycle metadata without retaining the submitted screenshot."""
-
-    __tablename__ = "help_request_results"
-    __table_args__ = (
-        Index(
-            "ix_help_request_result_status_updated",
-            "processing_status",
-            "updated_at",
-        ),
-        Index("ix_help_request_result_expires_at", "expires_at"),
-    )
-
-    request_id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    client_request_id: Mapped[str] = mapped_column(String(36), unique=True, nullable=False)
-    request_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    client_session_id: Mapped[str] = mapped_column(String(36), unique=True, nullable=False)
     access_token_digest: Mapped[str] = mapped_column(String(64), nullable=False)
-    access_token_digests_json: Mapped[str | None] = mapped_column(Text, nullable=True)
-    intent: Mapped[str] = mapped_column(String(40), nullable=False)
-    question: Mapped[str | None] = mapped_column(String(300), nullable=True)
-    processing_route: Mapped[str] = mapped_column(String(40), nullable=False)
-    processing_status: Mapped[str] = mapped_column(String(40), nullable=False)
-    received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    goal: Mapped[str] = mapped_column(String(500), nullable=False)
+    target_package: Mapped[str] = mapped_column(String(255), nullable=False)
+    status: Mapped[str] = mapped_column(String(24), nullable=False)
+    current_step: Mapped[int] = mapped_column(nullable=False)
+    sandbox_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    state_version: Mapped[int] = mapped_column(nullable=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    guidance_json: Mapped[str | None] = mapped_column(Text, nullable=True)
-    human_review_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
-    workflow_stage: Mapped[str | None] = mapped_column(String(40), nullable=True)
-    tutorial_match_status: Mapped[str | None] = mapped_column(String(40), nullable=True)
-    tutorial_match_reason: Mapped[str | None] = mapped_column(String(80), nullable=True)
-    tutorial_graph_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
-    tutorial_node_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
-    tutorial_revision_number: Mapped[int | None] = mapped_column(nullable=True)
-    tutorial_plan_json: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
-class HelpRequestEvidenceRecord(Base):
-    """Persist only normalized anchor evidence, never OCR or node-tree text."""
-
-    __tablename__ = "help_request_evidence"
+class AgentRunRecord(Base):
+    __tablename__ = "agent_runs"
     __table_args__ = (
-        Index(
-            "ix_help_request_evidence_request_received",
-            "request_id",
-            "received_at",
-        ),
-        Index("ix_help_request_evidence_expires_at", "expires_at"),
+        UniqueConstraint("session_id", "client_turn_id", name="uq_agent_run_session_turn"),
+        Index("ix_agent_run_status_created", "status", "created_at"),
     )
 
-    evidence_id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    request_id: Mapped[str] = mapped_column(
-        ForeignKey("help_request_results.request_id", ondelete="CASCADE"),
-        nullable=False,
+    run_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    session_id: Mapped[str] = mapped_column(
+        ForeignKey("agent_sessions.session_id", ondelete="CASCADE"), nullable=False
     )
-    package_name: Mapped[str] = mapped_column(String(255), nullable=False)
-    version_name: Mapped[str] = mapped_column(String(120), nullable=False)
-    version_code: Mapped[int] = mapped_column(nullable=False)
-    source: Mapped[str] = mapped_column(String(40), nullable=False)
-    sharing_policy: Mapped[str] = mapped_column(String(40), nullable=False)
-    structure_score: Mapped[float] = mapped_column(nullable=False)
-    captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    anchors_json: Mapped[str] = mapped_column(Text, nullable=False)
-    sanitized_screenshot_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    client_turn_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    status: Mapped[str] = mapped_column(String(24), nullable=False)
+    image_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    image_media_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    screen_width: Mapped[int] = mapped_column(nullable=False)
+    screen_height: Mapped[int] = mapped_column(nullable=False)
+    result_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    instruction: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    target_left: Mapped[float | None] = mapped_column(Float, nullable=True)
+    target_top: Mapped[float | None] = mapped_column(Float, nullable=True)
+    target_right: Mapped[float | None] = mapped_column(Float, nullable=True)
+    target_bottom: Mapped[float | None] = mapped_column(Float, nullable=True)
+    confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    retryable: Mapped[bool] = mapped_column(nullable=False)
+    model_name: Mapped[str] = mapped_column(String(120), nullable=False)
+    duration_ms: Mapped[int | None] = mapped_column(nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class GuidanceStepRecord(Base):
+    __tablename__ = "guidance_steps"
+    __table_args__ = (
+        UniqueConstraint("session_id", "step_number", name="uq_guidance_step_number"),
+    )
+
+    step_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    session_id: Mapped[str] = mapped_column(
+        ForeignKey("agent_sessions.session_id", ondelete="CASCADE"), nullable=False
+    )
+    run_id: Mapped[str] = mapped_column(
+        ForeignKey("agent_runs.run_id", ondelete="CASCADE"), unique=True, nullable=False
+    )
+    step_number: Mapped[int] = mapped_column(nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    instruction: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    target_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    confidence: Mapped[float] = mapped_column(Float, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

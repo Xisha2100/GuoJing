@@ -8,7 +8,7 @@ from alembic.config import Config
 from sqlalchemy import create_engine, inspect
 
 
-def test_migration_builds_and_removes_the_schema(
+def test_migration_replaces_legacy_schema_with_agent_tables(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -20,36 +20,28 @@ def test_migration_builds_and_removes_the_schema(
 
     engine = create_engine(f"sqlite:///{database_path}")
     tables = set(inspect(engine).get_table_names())
-    assert {
+    assert tables == {
+        "agent_runs",
+        "agent_sessions",
         "alembic_version",
-        "tutorials",
-        "tutorial_revisions",
-        "tutorial_publications",
-        "tutorial_draft_workspaces",
-        "admin_users",
-        "admin_sessions",
-        "admin_login_attempts",
-        "admin_audit_events",
-        "help_request_results",
-        "help_request_evidence",
-    } <= tables
-    result_columns = {
-        column["name"] for column in inspect(engine).get_columns("help_request_results")
+        "guidance_steps",
     }
-    assert {
-        "workflow_stage",
-        "tutorial_match_status",
-        "tutorial_match_reason",
-        "tutorial_graph_id",
-        "tutorial_node_id",
-        "tutorial_revision_number",
-        "question",
-        "access_token_digests_json",
-    } <= result_columns
     with engine.connect() as connection:
         assert connection.exec_driver_sql("PRAGMA journal_mode").scalar_one() == "wal"
+    persisted_columns = {
+        column["name"]
+        for table in tables - {"alembic_version"}
+        for column in inspect(engine).get_columns(table)
+    }
+    assert (
+        not {
+            "screenshot",
+            "screenshot_base64",
+            "model_messages",
+            "internal_reasoning",
+            "tool_output",
+        }
+        & persisted_columns
+    )
 
-    command.downgrade(config, "base")
-
-    assert set(inspect(engine).get_table_names()) == {"alembic_version"}
     engine.dispose()

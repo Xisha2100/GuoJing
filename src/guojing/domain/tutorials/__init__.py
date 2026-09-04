@@ -1,1 +1,0 @@
-"""Tutorial state graph domain."""

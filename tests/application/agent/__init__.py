@@ -1,0 +1,1 @@
+"""Visual agent application tests."""

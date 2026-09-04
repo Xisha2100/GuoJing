@@ -1,138 +1,129 @@
-"""FastAPI application entry point."""
+"""FastAPI composition root for the visual guidance agent backend."""
 
-from collections.abc import AsyncIterator
+import asyncio
+from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from datetime import timedelta
 
+from deepagents.backends.protocol import SandboxBackendProtocol
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 
 from guojing.api.error_handlers import handle_request_validation_error
-from guojing.api.middleware import HelpRequestSecurityMiddleware
+from guojing.api.middleware import AgentSecurityMiddleware
 from guojing.api.router import api_router
-from guojing.application.auth.service import AdminAuthService
-from guojing.application.help_requests.basic_guidance import DeterministicHelpRequestProcessor
-from guojing.application.help_requests.evidence_service import HelpRequestEvidenceService
-from guojing.application.help_requests.service import HelpRequestService
-from guojing.application.help_requests.workflow import HelpRequestWorkflow
-from guojing.application.tutorial_drafts.service import TutorialDraftService
-from guojing.application.tutorials.execution_plan import TutorialExecutionPlanService
-from guojing.application.tutorials.matcher import TutorialMatchService
-from guojing.application.tutorials.service import TutorialService
+from guojing.application.agent.coordinator import AgentRunCoordinator
+from guojing.application.agent.ports import SandboxRegistry, VisualGuidanceAgent
+from guojing.application.agent.service import AgentService
 from guojing.core.config import Settings
-from guojing.infrastructure.persistence.admin_auth_repository import (
-    SqlAlchemyAdminAuthRepository,
-)
+from guojing.domain.agent_guidance import AgentSession, GuidanceDecision, GuidanceStep
+from guojing.infrastructure.agents.deep_guidance_agent import DeepGuidanceAgent
+from guojing.infrastructure.persistence.agent_repository import SqlAlchemyAgentRepository
 from guojing.infrastructure.persistence.database import Database
-from guojing.infrastructure.persistence.help_request_evidence_repository import (
-    SqlAlchemyHelpRequestEvidenceRepository,
+from guojing.infrastructure.sandbox.docker_backend import (
+    DockerSandboxFactory,
+    DockerSandboxRegistry,
 )
-from guojing.infrastructure.persistence.help_request_repository import (
-    SqlAlchemyHelpRequestRepository,
-)
-from guojing.infrastructure.persistence.tutorial_draft_repository import (
-    SqlAlchemyTutorialDraftRepository,
-)
-from guojing.infrastructure.persistence.tutorial_repository import (
-    SqlAlchemyTutorialRepository,
-)
-from guojing.infrastructure.security.passwords import Argon2PasswordHasher
+
+
+class UnconfiguredGuidanceAgent:
+    """Keep local health checks available until a model key is configured."""
+
+    async def analyze(
+        self,
+        *,
+        session: AgentSession,
+        history: Sequence[GuidanceStep],
+        screenshot: bytes,
+        image_media_type: str,
+        sandbox: SandboxBackendProtocol,
+    ) -> GuidanceDecision:
+        del session, history, screenshot, image_media_type, sandbox
+        raise RuntimeError("DeepSeek is not configured")
 
 
 def create_app(
     settings: Settings | None = None,
-    tutorial_service: TutorialService | None = None,
-    tutorial_draft_service: TutorialDraftService | None = None,
-    admin_auth_service: AdminAuthService | None = None,
-    help_request_service: HelpRequestService | None = None,
-    help_request_evidence_service: HelpRequestEvidenceService | None = None,
-    help_request_workflow: HelpRequestWorkflow | None = None,
+    *,
+    agent_service: AgentService | None = None,
+    visual_agent: VisualGuidanceAgent | None = None,
+    sandbox_registry: SandboxRegistry | None = None,
+    agent_coordinator: AgentRunCoordinator | None = None,
 ) -> FastAPI:
     """Build an isolated application instance for production or tests."""
     app_settings = settings or Settings()
     database: Database | None = None
-    if (
-        tutorial_service is None
-        or tutorial_draft_service is None
-        or admin_auth_service is None
-        or help_request_service is None
-        or help_request_evidence_service is None
-    ):
+    if agent_service is None:
         database = Database(app_settings.database_url)
-    if tutorial_service is None:
-        assert database is not None
-        tutorial_service = TutorialService(SqlAlchemyTutorialRepository(database))
-    if tutorial_draft_service is None:
-        assert database is not None
-        tutorial_draft_service = TutorialDraftService(SqlAlchemyTutorialDraftRepository(database))
-    if admin_auth_service is None:
-        assert database is not None
-        admin_auth_service = AdminAuthService(
-            SqlAlchemyAdminAuthRepository(database),
-            Argon2PasswordHasher(),
-            session_ttl=timedelta(minutes=app_settings.admin_session_ttl_minutes),
-            login_window=timedelta(minutes=app_settings.admin_login_window_minutes),
-            maximum_failures=app_settings.admin_maximum_login_failures,
+        agent_service = AgentService(
+            SqlAlchemyAgentRepository(database),
+            session_ttl=timedelta(hours=app_settings.agent_session_ttl_hours),
         )
-    if help_request_service is None:
-        assert database is not None
-        help_request_service = HelpRequestService(
-            repository=SqlAlchemyHelpRequestRepository(database),
+    if visual_agent is None:
+        if app_settings.deepseek_api_key is None:
+            visual_agent = UnconfiguredGuidanceAgent()
+        else:
+            visual_agent = DeepGuidanceAgent(
+                api_key=app_settings.deepseek_api_key.get_secret_value(),
+                base_url=app_settings.deepseek_base_url,
+                model_name=app_settings.deepseek_vision_model,
+                model_timeout_seconds=app_settings.deepseek_model_timeout_seconds,
+                confidence_threshold=app_settings.agent_confidence_threshold,
+            )
+    if sandbox_registry is None:
+        sandbox_registry = DockerSandboxRegistry(
+            DockerSandboxFactory(
+                docker_host=app_settings.sandbox_docker_host,
+                image=app_settings.sandbox_image,
+            ),
+            idle_ttl_seconds=app_settings.sandbox_idle_ttl_seconds,
         )
-    if help_request_evidence_service is None:
-        assert database is not None
-        assert help_request_service is not None
-        help_request_evidence_service = HelpRequestEvidenceService(
-            help_request_service,
-            SqlAlchemyHelpRequestEvidenceRepository(
-                database,
-                max_envelopes_per_request=app_settings.help_request_evidence_max_per_request,
-            ),
-            max_capture_age=timedelta(
-                minutes=app_settings.help_request_evidence_max_age_minutes,
-            ),
-            max_future_skew=timedelta(
-                seconds=app_settings.help_request_evidence_future_skew_seconds,
-            ),
-            server_ttl=timedelta(minutes=app_settings.help_request_evidence_ttl_minutes),
-        )
-    if help_request_workflow is None:
-        assert tutorial_service is not None
-        assert help_request_service is not None
-        assert help_request_evidence_service is not None
-        help_request_workflow = HelpRequestWorkflow(
-            help_request_service=help_request_service,
-            evidence_service=help_request_evidence_service,
-            tutorial_match_service=TutorialMatchService(tutorial_service),
-            execution_plan_service=TutorialExecutionPlanService(tutorial_service),
-            general_guidance_processor=DeterministicHelpRequestProcessor(),
+    if agent_coordinator is None:
+        agent_coordinator = AgentRunCoordinator(
+            agent_service,
+            visual_agent,
+            sandbox_registry,
+            maximum_concurrency=app_settings.agent_max_concurrency,
+            queue_capacity=app_settings.agent_queue_capacity,
+            run_timeout_seconds=app_settings.agent_run_timeout_seconds,
         )
 
     @asynccontextmanager
     async def lifespan(_application: FastAPI) -> AsyncIterator[None]:
-        yield
-        if database is not None:
-            database.dispose()
+        if isinstance(sandbox_registry, DockerSandboxRegistry):
+            await sandbox_registry.start()
+        await agent_coordinator.start()
+        reaper = asyncio.create_task(_reap_sandboxes(sandbox_registry))
+        try:
+            yield
+        finally:
+            reaper.cancel()
+            await asyncio.gather(reaper, return_exceptions=True)
+            await agent_coordinator.stop()
+            if database is not None:
+                database.dispose()
 
     application = FastAPI(
         title=app_settings.app_name,
         debug=app_settings.debug,
         lifespan=lifespan,
     )
-    application.add_middleware(HelpRequestSecurityMiddleware)
+    application.add_middleware(AgentSecurityMiddleware)
     application.add_exception_handler(
         RequestValidationError,
         handle_request_validation_error,
     )
     application.state.settings = app_settings
-    application.state.tutorial_service = tutorial_service
-    application.state.tutorial_draft_service = tutorial_draft_service
-    application.state.admin_auth_service = admin_auth_service
-    application.state.help_request_service = help_request_service
-    application.state.help_request_evidence_service = help_request_evidence_service
-    application.state.help_request_workflow = help_request_workflow
+    application.state.agent_service = agent_service
+    application.state.agent_coordinator = agent_coordinator
     application.include_router(api_router)
     return application
+
+
+async def _reap_sandboxes(registry: SandboxRegistry) -> None:
+    while True:
+        await asyncio.sleep(60)
+        await registry.cleanup_idle()
 
 
 app = create_app()

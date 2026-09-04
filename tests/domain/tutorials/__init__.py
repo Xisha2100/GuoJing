@@ -1,1 +1,0 @@
-"""Tutorial domain tests."""
