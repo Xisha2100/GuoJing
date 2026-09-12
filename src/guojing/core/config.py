@@ -18,6 +18,8 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(
         env_prefix="GUOJING_",
+        env_file=".env.local",
+        env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",
         frozen=True,

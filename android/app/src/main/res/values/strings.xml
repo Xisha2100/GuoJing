@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">老牌子</string>
-    <string name="accessibility_service_label">老牌子页面观察</string>
-    <string name="accessibility_service_description">仅在你主动查看教程时，本地识别目标应用的页面控件，帮助判断教程步骤是否匹配。不会替你点击。</string>
+    <string name="accessibility_service_label">老牌子界面指引</string>
+    <string name="accessibility_service_description">仅在你点击悬浮按钮后截取当前目标应用画面并发送到已配置的智能体服务，以生成单步位置指引。不会自动点击或操作手机。</string>
 </resources>

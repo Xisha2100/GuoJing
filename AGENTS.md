@@ -26,7 +26,7 @@ The backend requires Python 3.12.13 and uv. Keep working setup and validation co
 - `uv lock --check` — verify that `uv.lock` matches `pyproject.toml`.
 - `git diff --check` — detect whitespace errors before committing.
 
-The Android app requires JDK 17, Android SDK Platform 37, and Build Tools 37.0.0. Use its checked-in Wrapper; do not require a global Gradle or Kotlin installation:
+The Android app uses JDK 21 for the Gradle daemon (pinned in `android/gradle/gradle-daemon-jvm.properties`), Java compilation target 17, Android SDK Platform 37, and Build Tools 37.0.0. Use its checked-in Wrapper; do not require a global Gradle or Kotlin installation:
 
 - `cd android && ./gradlew testDebugUnitTest` — run JVM unit tests without a device.
 - `cd android && ./gradlew lintDebug` — run Android static analysis.

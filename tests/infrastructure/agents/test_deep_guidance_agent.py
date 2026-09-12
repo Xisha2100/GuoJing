@@ -4,6 +4,7 @@ from typing import Any, cast
 from uuid import uuid4
 
 import pytest
+from deepagents import GeneralPurposeSubagentProfile, HarnessProfile
 from deepagents.backends.protocol import FileUploadResponse, SandboxBackendProtocol
 from langchain_core.messages import AIMessage
 
@@ -23,9 +24,42 @@ class FakeSandbox:
         return [FileUploadResponse(path=files[0][0], error=None)]
 
 
+def test_disables_implicit_general_purpose_subagent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_register(key: str, profile: object) -> None:
+        captured["key"] = key
+        captured["profile"] = profile
+
+    module._disable_default_general_purpose_subagent.cache_clear()
+    monkeypatch.setattr(module, "register_harness_profile", fake_register)
+
+    module._disable_default_general_purpose_subagent("vision-model")
+
+    assert captured["key"] == "openai:vision-model"
+    profile = captured["profile"]
+    assert isinstance(profile, HarnessProfile)
+    assert profile.general_purpose_subagent == (GeneralPurposeSubagentProfile(enabled=False))
+    module._disable_default_general_purpose_subagent.cache_clear()
+
+
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("goal", "instruction", "expected_status"),
+    [
+        ("打开扫一扫", "点击右上角的加号", GuidanceStatus.CONTINUE),
+        ("打开搜索", "Click Search", GuidanceStatus.CANNOT_DETERMINE),
+        ("打开搜索", "点击 Search 搜索框", GuidanceStatus.CANNOT_DETERMINE),
+        ("搜索 OpenAI", "在搜索框输入 OpenAI", GuidanceStatus.CONTINUE),
+    ],
+)
 async def test_real_deepagents_composition_receives_image_and_fixed_subagents(
     monkeypatch: pytest.MonkeyPatch,
+    goal: str,
+    instruction: str,
+    expected_status: GuidanceStatus,
 ) -> None:
     captured: dict[str, Any] = {}
 
@@ -64,7 +98,7 @@ async def test_real_deepagents_composition_receives_image_and_fixed_subagents(
                 ],
                 "structured_response": GuidanceDecisionOutput(
                     status="continue",
-                    instruction="点击右上角的加号",
+                    instruction=instruction,
                     target=TargetOutput(left=0.8, top=0.1, right=0.9, bottom=0.2),
                     confidence=0.95,
                 ),
@@ -80,7 +114,7 @@ async def test_real_deepagents_composition_receives_image_and_fixed_subagents(
         session_id=uuid4(),
         client_session_id=uuid4(),
         access_token_digest="a" * 64,
-        goal="打开扫一扫",
+        goal=goal,
         target_package="com.tencent.mm",
         status=AgentSessionStatus.ACTIVE,
         current_step=0,
@@ -101,6 +135,7 @@ async def test_real_deepagents_composition_receives_image_and_fixed_subagents(
     assert agent._model.request_timeout == 30
     assert agent._model.max_retries == 0
     assert agent._model.use_responses_api is False
+    assert agent._model.extra_body == {"thinking": {"type": "disabled"}}
 
     result = await agent.analyze(
         session=session,
@@ -110,13 +145,22 @@ async def test_real_deepagents_composition_receives_image_and_fixed_subagents(
         sandbox=cast(SandboxBackendProtocol, FakeSandbox()),
     )
 
-    assert result.status is GuidanceStatus.CONTINUE
+    assert result.status is expected_status
+    if expected_status is GuidanceStatus.CANNOT_DETERMINE:
+        assert result.target is None
+        assert result.instruction == "本次指引未能生成中文说明,请重新识别。"
+    else:
+        assert result.instruction == instruction
     composition = cast(dict[str, Any], captured["composition"])
     assert [item["name"] for item in composition["subagents"]] == [
         "ui-analyst",
         "guidance-reviewer",
     ]
     assert [item["mode"] for item in composition["subagents"]] == ["fork", "isolated"]
+    assert "Never call task or delegate" in composition["subagents"][0]["system_prompt"]
+    language_rule = "用户目标包含英文字母" if "OpenAI" in goal else "用户目标不含英文字母"
+    assert language_rule in composition["system_prompt"]
+    assert all(language_rule in item["system_prompt"] for item in composition["subagents"])
     assert "response_format" in composition
     assert all("response_format" in item for item in composition["subagents"])
     assert "checkpointer" not in composition

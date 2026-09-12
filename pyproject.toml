@@ -15,6 +15,7 @@ dependencies = [
     "pillow>=11,<13",
     "pydantic>=2.13.4,<3.0.0",
     "pydantic-settings>=2.14.2,<3.0.0",
+    "python-dotenv>=1.2,<2",
     "sqlalchemy>=2.0.51,<2.1.0",
     "uvicorn[standard]>=0.51.0,<0.52.0",
 ]

@@ -3,6 +3,7 @@
 import asyncio
 import io
 import shlex
+import socket
 import tarfile
 import time
 from dataclasses import dataclass
@@ -78,23 +79,46 @@ class DockerSandboxBackend(BaseSandbox):
         for raw_path, content in files:
             try:
                 path = _safe_path(raw_path)
-                archive = io.BytesIO()
-                with tarfile.open(fileobj=archive, mode="w") as tar:
-                    info = tarfile.TarInfo(name=path.name)
-                    info.size = len(content)
-                    info.mode = 0o600
-                    tar.addfile(info, io.BytesIO(content))
-                archive.seek(0)
                 parent = str(path.parent)
-                self.execute(f"mkdir -p {shlex.quote(parent)}")
-                if not self._container.put_archive(parent, archive.getvalue()):
-                    raise RuntimeError("Docker rejected archive")
+                created_parent = self.execute(f"mkdir -p {shlex.quote(parent)}")
+                if created_parent.exit_code != 0:
+                    raise RuntimeError("sandbox parent creation failed")
+                self._write_file(path, content)
                 responses.append(FileUploadResponse(path=str(path), error=None))
             except ValueError:
                 responses.append(FileUploadResponse(path=raw_path, error="invalid_path"))
             except Exception:
                 responses.append(FileUploadResponse(path=raw_path, error="upload_failed"))
         return responses
+
+    def _write_file(self, path: PurePosixPath, content: bytes) -> None:
+        """Stream bytes through a container process into the writable tmpfs.
+
+        Docker's archive-copy endpoint rejects every destination when the container
+        root filesystem is read-only, including writable tmpfs mounts. Standard
+        input preserves the read-only-root policy while allowing writes strictly
+        through the unprivileged process inside the sandbox.
+        """
+        created = self._client.api.exec_create(
+            self._container.id,
+            ["sh", "-lc", f"umask 077; cat > {shlex.quote(str(path))}"],
+            stdin=True,
+            stdout=True,
+            stderr=True,
+        )
+        exec_id = created["Id"]
+        stream = self._client.api.exec_start(exec_id, socket=True)
+        raw_socket = getattr(stream, "_sock", stream)
+        try:
+            raw_socket.sendall(content)
+            raw_socket.shutdown(socket.SHUT_WR)
+            while raw_socket.recv(4096):
+                pass
+        finally:
+            stream.close()
+        inspected = self._client.api.exec_inspect(exec_id)
+        if inspected.get("ExitCode") != 0:
+            raise RuntimeError("sandbox file write failed")
 
     def download_files(self, paths: list[str]) -> list[FileDownloadResponse]:
         responses: list[FileDownloadResponse] = []

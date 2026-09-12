@@ -1,6 +1,6 @@
 package com.xisha.guojing.guidance
 
-import com.xisha.guojing.observation.NormalizedScreenBounds
+import com.xisha.guojing.model.NormalizedTarget
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
@@ -15,7 +15,7 @@ class OverlayLayoutPlannerTest {
         val layout = planner.plan(
             screenWidth = 1080,
             screenHeight = 2400,
-            targetBounds = NormalizedScreenBounds(0.1, 0.1, 0.9, 0.2),
+            targetBounds = NormalizedTarget(0.1, 0.1, 0.9, 0.2),
             density = 3f,
         )
 
@@ -29,7 +29,7 @@ class OverlayLayoutPlannerTest {
         val layout = planner.plan(
             screenWidth = 1080,
             screenHeight = 2400,
-            targetBounds = NormalizedScreenBounds(0.2, 0.75, 0.8, 0.85),
+            targetBounds = NormalizedTarget(0.2, 0.75, 0.8, 0.85),
             density = 3f,
         )
 
@@ -42,7 +42,7 @@ class OverlayLayoutPlannerTest {
         val layout = planner.plan(
             screenWidth = 100,
             screenHeight = 200,
-            targetBounds = NormalizedScreenBounds(0.0, 0.0, 1.0, 1.0),
+            targetBounds = NormalizedTarget(0.0, 0.0, 1.0, 1.0),
             density = 2f,
         )
         val target = requireNotNull(layout.targetRect)
@@ -58,7 +58,7 @@ class OverlayLayoutPlannerTest {
         val layout = planner.plan(
             screenWidth = 1080,
             screenHeight = 2274,
-            targetBounds = NormalizedScreenBounds(0.2, 0.25, 0.6, 0.30),
+            targetBounds = NormalizedTarget(0.2, 0.25, 0.6, 0.30),
             density = 1f,
             displayWidth = 1080,
             displayHeight = 2400,

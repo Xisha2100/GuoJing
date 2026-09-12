@@ -1,204 +1,237 @@
 package com.xisha.guojing.observation
 
 import android.accessibilityservice.AccessibilityService
-import android.content.pm.PackageManager
-import android.graphics.Rect
-import android.os.Build
-import android.util.Log
+import android.graphics.Bitmap
+import android.hardware.HardwareBuffer
+import android.view.Display
+import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
-import android.view.accessibility.AccessibilityNodeInfo
-import androidx.core.content.pm.PackageInfoCompat
-import com.xisha.guojing.BuildConfig
-import com.xisha.guojing.guidance.AccessibilityGuidanceCoordinator
 import com.xisha.guojing.guidance.AccessibilityGuidanceOverlayController
-import com.xisha.guojing.guidance.GuidanceOverlayState
-import kotlinx.coroutines.CoroutineScope
+import com.xisha.guojing.guidance.OverlayActions
+import com.xisha.guojing.guidance.OverlayPresentation
+import com.xisha.guojing.model.CapturedScreen
+import java.io.ByteArrayOutputStream
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
+import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
 
-class GuoJingAccessibilityService : AccessibilityService() {
-    private val observationBuilder = SemanticObservationBuilder()
-    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+class GuoJingAccessibilityService : AccessibilityService(), AccessibilityHost {
     private var overlayController: AccessibilityGuidanceOverlayController? = null
-
-    override fun onAccessibilityEvent(event: AccessibilityEvent) {
-        val request = AccessibilityObservationCoordinator.activeRequest() ?: run {
-            overlayController?.temporarilyHide()
-            return
-        }
-        // This check happens before rootInActiveWindow: capture-paused means no tree access.
-        if (request.privacyMode == com.xisha.guojing.model.PrivacyMode.CapturePaused) {
-            overlayController?.temporarilyHide()
-            return
-        }
-        val packageName = event.packageName?.toString() ?: run {
-            overlayController?.temporarilyHide()
-            return
-        }
-        if (packageName != request.targetPackageName) {
-            overlayController?.temporarilyHide()
-            return
-        }
-        debug("received target event type=${event.eventType} node=${request.nodeId}")
-        val root = rootInActiveWindow
-        if (root == null) {
-            debug("target event has no active root")
-            overlayController?.temporarilyHide()
-            return
-        }
-        // Events can arrive after a fast app switch; verify the live root independently.
-        if (root.packageName?.toString() != request.targetPackageName) {
-            debug("active root package does not match target")
-            overlayController?.temporarilyHide()
-            return
-        }
-        val observation = observationBuilder.build(
-            request = request,
-            app = readObservedApp(packageName),
-            nodes = readSemanticNodes(root),
-        ) ?: run {
-            overlayController?.temporarilyHide()
-            return
-        }
-        debug(
-            "observed package=$packageName node=${request.nodeId} evidence=" +
-                observation.anchorEvidence.joinToString { evidence ->
-                    "${evidence.anchorId}:${evidence.confidence}"
-                },
-        )
-        AccessibilityObservationCoordinator.publish(observation)
-    }
-
-    override fun onInterrupt() = Unit
+    private var presentation: OverlayPresentation = OverlayPresentation.Hidden
+    private var actions: OverlayActions? = null
+    private var captureInProgress = false
 
     override fun onServiceConnected() {
         super.onServiceConnected()
         overlayController = AccessibilityGuidanceOverlayController(this)
-        // The service can be recreated while the process-level coordinator
-        // still contains the previous command.  Require a fresh observation
-        // after reconnect instead of restoring that command by package name.
-        overlayController?.hide()
-        AccessibilityGuidanceCoordinator.hide()
-        serviceScope.launch {
-            AccessibilityGuidanceCoordinator.state.collect { state ->
-                when (state) {
-                    GuidanceOverlayState.Hidden -> overlayController?.hide()
-                    is GuidanceOverlayState.Visible -> {
-                        if (isCurrentVisibleCommand(state)) {
-                            overlayController?.show(state.command)
-                        } else {
-                            overlayController?.temporarilyHide()
-                        }
-                    }
-                }
-            }
-        }
-        // A prior observation may describe a stale window after the service reconnects.
-        AccessibilityObservationCoordinator.activeRequest()?.let(
-            AccessibilityObservationCoordinator::observe,
-        )
+        AccessibilityRuntimeBridge.attach(this)
     }
 
-    private fun isCurrentVisibleCommand(state: GuidanceOverlayState.Visible): Boolean {
-        val observationState = AccessibilityObservationCoordinator.state.value
-        val available = observationState as? ObservationState.Available ?: return false
-        val command = state.command
-        val observation = available.observation
-        return command.observationSequence > 0L &&
-            available.sequence == command.observationSequence &&
-            observation.request.graphId == command.graphId &&
-            observation.request.nodeId == command.nodeId &&
-            observation.app.packageName == command.targetPackageName &&
-            rootInActiveWindow?.packageName?.toString() == command.targetPackageName
+    override fun onAccessibilityEvent(event: AccessibilityEvent) {
+        if (presentation is OverlayPresentation.Hidden) return
+        updateOverlayVisibility()
+    }
+
+    override fun onInterrupt() {
+        overlayController?.temporarilyHide()
+    }
+
+    override suspend fun capture(targetPackage: String): CapturedScreen {
+        check(!captureInProgress)
+        captureInProgress = true
+        overlayController?.temporarilyHide()
+        try {
+            delay(OVERLAY_SETTLE_MILLIS)
+            check(foregroundPackage() == targetPackage) {
+                "Target application is not in the foreground"
+            }
+            val rotation = currentRotation()
+            val raw = takeRawScreenshot()
+            var encoded: CapturedScreen? = null
+            try {
+                raw.use {
+                    withContext(Dispatchers.Default) {
+                        encoded = encodeScreenshot(it, rotation)
+                    }
+                }
+                check(foregroundPackage() == targetPackage && currentRotation() == rotation)
+                return requireNotNull(encoded)
+            } catch (error: Throwable) {
+                encoded?.erase()
+                throw error
+            }
+        } finally {
+            captureInProgress = false
+            updateOverlayVisibility()
+        }
+    }
+
+    override fun present(value: OverlayPresentation, actions: OverlayActions) {
+        presentation = value
+        this.actions = actions
+        updateOverlayVisibility()
+    }
+
+    override fun hide() {
+        presentation = OverlayPresentation.Hidden
+        overlayController?.hide()
+    }
+
+    override fun isDisplayCurrent(
+        targetPackage: String,
+        displayWidth: Int,
+        displayHeight: Int,
+        rotation: Int,
+    ): Boolean {
+        val bounds = getSystemService(WindowManager::class.java).currentWindowMetrics.bounds
+        return foregroundPackage() == targetPackage &&
+            bounds.width() == displayWidth &&
+            bounds.height() == displayHeight &&
+            currentRotation() == rotation
     }
 
     override fun onDestroy() {
-        // The ViewModel owns the logical guidance session. Android may recreate this
-        // service while that session is active, so only release this service's window.
+        AccessibilityRuntimeBridge.detach(this)
         overlayController?.hide()
         overlayController = null
-        serviceScope.cancel()
+        actions = null
         super.onDestroy()
     }
 
-    private fun readObservedApp(packageName: String): ObservedApp {
-        val packageInfo = try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                packageManager.getPackageInfo(
-                    packageName,
-                    PackageManager.PackageInfoFlags.of(0),
-                )
-            } else {
-                @Suppress("DEPRECATION")
-                packageManager.getPackageInfo(packageName, 0)
-            }
-        } catch (_: PackageManager.NameNotFoundException) {
-            null
+    private fun updateOverlayVisibility() {
+        if (captureInProgress) {
+            overlayController?.temporarilyHide()
+            return
         }
-        return ObservedApp(
-            packageName = packageName,
-            versionName = packageInfo?.versionName.orEmpty(),
-            versionCode = packageInfo?.let(PackageInfoCompat::getLongVersionCode) ?: 0,
-        )
+        val value = presentation
+        if (value is OverlayPresentation.Hidden) {
+            overlayController?.hide()
+            return
+        }
+        if (foregroundPackage() == value.targetPackage()) {
+            val visible = if (value is OverlayPresentation.Guidance && !isDisplayCurrent(
+                    value.targetPackage, value.displayWidth, value.displayHeight, value.rotation,
+                )
+            ) {
+                OverlayPresentation.Retry(value.targetPackage, "屏幕方向已变化，请重新识别")
+            } else {
+                value
+            }
+            overlayController?.present(visible, requireNotNull(actions))
+        } else {
+            overlayController?.temporarilyHide()
+        }
     }
 
-    private fun readSemanticNodes(root: AccessibilityNodeInfo): List<SemanticNodeSnapshot> {
-        val (screenWidth, screenHeight) = screenSize()
-        val pending = ArrayDeque<Pair<AccessibilityNodeInfo, Int>>()
-        val snapshots = mutableListOf<SemanticNodeSnapshot>()
-        pending.add(root to 0)
-        while (pending.isNotEmpty() && snapshots.size < MAX_NODE_COUNT) {
-            val (node, depth) = pending.removeFirst()
-            snapshots += node.toSnapshot(screenWidth, screenHeight)
-            if (depth >= MAX_TREE_DEPTH) continue
-            repeat(node.childCount) { index ->
-                node.getChild(index)?.let { child -> pending.add(child to depth + 1) }
-            }
-        }
-        return snapshots
-    }
+    private fun foregroundPackage(): String? =
+        rootInActiveWindow?.packageName?.toString()
 
-    private fun AccessibilityNodeInfo.toSnapshot(
-        screenWidth: Int,
-        screenHeight: Int,
-    ): SemanticNodeSnapshot {
-        val bounds = Rect()
-        getBoundsInScreen(bounds)
-        val containsPassword = isPassword
-        return SemanticNodeSnapshot(
-            resourceId = viewIdResourceName?.limited(),
-            contentDescription = if (containsPassword) null else contentDescription?.toString()?.limited(),
-            text = if (containsPassword) null else text?.toString()?.limited(),
-            normalizedBounds = if (screenWidth > 0 && screenHeight > 0 && !bounds.isEmpty) {
-                NormalizedScreenBounds(
-                    left = bounds.left.coerceIn(0, screenWidth).toDouble() / screenWidth,
-                    top = bounds.top.coerceIn(0, screenHeight).toDouble() / screenHeight,
-                    right = bounds.right.coerceIn(0, screenWidth).toDouble() / screenWidth,
-                    bottom = bounds.bottom.coerceIn(0, screenHeight).toDouble() / screenHeight,
-                )
-            } else {
-                null
+    private suspend fun takeRawScreenshot(): RawScreenshot = suspendCancellableCoroutine {
+        continuation ->
+        takeScreenshot(
+            Display.DEFAULT_DISPLAY,
+            mainExecutor,
+            object : TakeScreenshotCallback {
+                override fun onSuccess(screenshot: ScreenshotResult) {
+                    if (continuation.isActive) {
+                        continuation.resume(
+                            RawScreenshot(screenshot.hardwareBuffer, screenshot.colorSpace),
+                        )
+                    } else {
+                        screenshot.hardwareBuffer.close()
+                    }
+                }
+
+                override fun onFailure(errorCode: Int) {
+                    if (continuation.isActive) {
+                        continuation.resumeWithException(
+                            ScreenCaptureException("Screenshot failed", errorCode),
+                        )
+                    }
+                }
             },
         )
     }
 
-    private fun screenSize(): Pair<Int, Int> {
-        val metrics = resources.displayMetrics
-        return metrics.widthPixels to metrics.heightPixels
+    private fun encodeScreenshot(raw: RawScreenshot, rotation: Int): CapturedScreen {
+        val hardwareBitmap = Bitmap.wrapHardwareBuffer(raw.buffer, raw.colorSpace)
+            ?: throw ScreenCaptureException("Unable to read screenshot")
+        try {
+            val source = hardwareBitmap.copy(Bitmap.Config.ARGB_8888, false)
+                ?: throw ScreenCaptureException("Unable to copy screenshot")
+            try {
+                val displayWidth = source.width
+                val displayHeight = source.height
+                val scale = (MAX_SCREEN_DIMENSION.toFloat() / maxOf(source.width, source.height))
+                    .coerceAtMost(1f)
+                val width = (source.width * scale).roundToInt()
+                val height = (source.height * scale).roundToInt()
+                val resized = if (width == source.width && height == source.height) {
+                    source
+                } else {
+                    Bitmap.createScaledBitmap(source, width, height, true)
+                }
+                try {
+                    val bytes = ByteArrayOutputStream().use { output ->
+                        check(resized.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, output))
+                        output.toByteArray()
+                    }
+                    if (bytes.size > MAX_ENCODED_BYTES) {
+                        bytes.fill(0)
+                        throw ScreenCaptureException("Screenshot is too large")
+                    }
+                    return CapturedScreen(
+                        jpegBytes = bytes,
+                        width = resized.width,
+                        height = resized.height,
+                        displayWidth = displayWidth,
+                        displayHeight = displayHeight,
+                        rotation = rotation,
+                    )
+                } finally {
+                    if (resized !== source) resized.recycle()
+                }
+            } finally {
+                source.recycle()
+            }
+        } finally {
+            hardwareBitmap.recycle()
+        }
     }
 
-    private fun String.limited(): String = take(MAX_SEMANTIC_VALUE_LENGTH)
+    private fun currentRotation(): Int = captureDisplayRotation(this)
 
-    private fun debug(message: String) {
-        if (BuildConfig.DEBUG) Log.d(LOG_TAG, message)
+    private fun OverlayPresentation.targetPackage(): String = when (this) {
+        OverlayPresentation.Hidden -> ""
+        is OverlayPresentation.Ready -> targetPackage
+        is OverlayPresentation.Loading -> targetPackage
+        is OverlayPresentation.Guidance -> targetPackage
+        is OverlayPresentation.Retry -> targetPackage
+        is OverlayPresentation.Completed -> targetPackage
     }
 
     private companion object {
-        const val MAX_NODE_COUNT = 500
-        const val MAX_TREE_DEPTH = 30
-        const val MAX_SEMANTIC_VALUE_LENGTH = 200
-        const val LOG_TAG = "GuoJingObservation"
+        const val OVERLAY_SETTLE_MILLIS = 120L
+        const val MAX_SCREEN_DIMENSION = 1440
+        const val MAX_ENCODED_BYTES = 8 * 1024 * 1024
+        const val JPEG_QUALITY = 85
+    }
+}
+
+class ScreenCaptureException(
+    message: String,
+    val platformErrorCode: Int? = null,
+) : IllegalStateException(message)
+
+private class RawScreenshot(
+    val buffer: HardwareBuffer,
+    val colorSpace: android.graphics.ColorSpace,
+) : AutoCloseable {
+    override fun close() {
+        buffer.close()
     }
 }

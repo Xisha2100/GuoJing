@@ -1,8 +1,8 @@
 # 老牌子（GuoJing）
 
-老牌子当前优先交付后端视觉指引智能体：客户端提交用户目标和当前手机截图，后端通过 Deep Agents 调用界面分析与指引审校两个子智能体，每轮只返回一个可见目标的结构化操作提示。智能体不会控制手机，也不会代替用户点击。
+老牌子是一套后端 Deep Agent 与 Android 客户端组成的视觉操作指引应用：用户选择目标应用并说明目标，主动点击悬浮按钮提交当前手机截图；后端调用界面分析与指引审校两个子智能体，每轮只返回一个可见目标的结构化操作提示，Android 在原应用上框出位置并朗读说明。智能体不会控制手机，也不会代替用户点击。
 
-> 当前阶段只验收后端。仓库中的 Android 应用仍是旧教程协议客户端，与新的 `/api/v1/agent` API 暂不兼容；Android 构建不是本阶段质量门禁。旧教程后端、人工审核、管理员系统和 React 管理网页已经删除，Android 接入将在第二阶段完成。
+> 当前已实现视觉闭环的后端与 Android 客户端，通过离线测试、Android 构建和模拟器界面测试；真实手机与 DeepSeek 的多轮联调仍需验收，云语音输入尚未接入。旧教程后端、人工审核、管理员系统、React 管理网页以及 Android 旧教程/手动截图/OCR 链路均已删除。
 
 ## 已实现架构
 
@@ -29,6 +29,7 @@ FastAPI 会话/run API ──► 有界内存队列（4 并发、20 等待）
 - 模型使用 `ChatOpenAI` 访问 DeepSeek OpenAI 兼容 Chat Completions 接口，默认模型为 `deepseek-v4-flash-vision-exp`。
 - `ui-analyst` 继承本轮多模态截图上下文；`guidance-reviewer` 是隔离子智能体，只接收界面分析文本和候选步骤。两者必须各调用一次且顺序固定。
 - 最终响应通过 `ToolStrategy(GuidanceDecisionOutput)` 校验。低于置信度阈值的候选步骤会降级为 `cannot_determine`。
+- 指引默认使用简体中文，英文界面控件以中文含义、位置或图标描述。只有用户目标包含英文字母时才允许保留相关英文；中文目标下含英文字母的模型结果会降级为中文重试提示，不展示操作框。
 - 每个会话使用一个临时 Docker 容器；容器无网络、无宿主机挂载和凭据，根文件系统只读，限制为 0.5 CPU、512 MiB、64 PIDs。
 - 截图只存在于请求内存、可清零的 `bytearray` 和沙箱临时目录。数据库不保存截图、Base64、完整模型消息、内部推理或原始工具输出。
 - 服务启动时把未完成 run 标记为可重试的 `failed/server_restarted`，并清理遗留沙箱。
@@ -47,22 +48,23 @@ src/guojing/
 └── main.py                 # FastAPI 组合根
 migrations/                 # 保留历史迁移，并迁移到三张 Agent 表
 tests/                      # 默认使用 Fake Model / Fake Sandbox
-android/                    # 暂时保留的旧客户端，第二阶段重构
+android/                    # Android 11+ 截图、SSE、悬浮指引与 TTS 客户端
 ```
 
 ## 本地运行
 
 要求 Python 3.12.13、uv 和 Docker Engine。先确保沙箱镜像已经存在；默认使用 `python:3.12-slim`，生产环境应使用国内镜像仓库中的固定摘要镜像。
 
-```bash
+```fish
 uv sync
 docker pull python:3.12-slim
 uv run alembic upgrade head
-export GUOJING_DEEPSEEK_API_KEY='你的密钥'
 uv run uvicorn guojing.main:app --reload
 ```
 
-API 不自动读取 `.env`。可参考 [`.env.example`](.env.example)，由 shell、IDE、容器平台或密钥管理服务注入变量。启动后可访问：
+本地开发可复制 [`.env.example`](.env.example) 为 `.env.local`，后端启动时会自动读取；系统环境变量的优先级更高。`.env.local` 已被 Git 忽略，不能提交真实密钥。云端仍应使用容器平台或密钥管理服务注入。启动后可访问：
+
+完整的首次启动、真实截图多轮调用、测试命令和故障排查见 [后端启动与测试指南](docs/startup-and-testing.md)。
 
 - 健康检查：<http://127.0.0.1:8000/health>
 - Swagger UI：<http://127.0.0.1:8000/docs>
@@ -71,7 +73,7 @@ API 不自动读取 `.env`。可参考 [`.env.example`](.env.example)，由 shel
 
 创建会话，`access_token` 只返回一次，服务端只保存其 SHA-256 摘要：
 
-```bash
+```fish
 curl -sS http://127.0.0.1:8000/api/v1/agent/sessions \
   -H 'Content-Type: application/json' \
   -d '{
@@ -84,8 +86,8 @@ curl -sS http://127.0.0.1:8000/api/v1/agent/sessions \
 
 将响应中的 `session_id` 和 `access_token` 用于后续请求。截图只接受 JPEG/PNG，解码后不超过 8 MiB，单边不超过 4096 像素，声明尺寸必须与图片一致：
 
-```bash
-SCREENSHOT_BASE64="$(base64 < current-screen.png | tr -d '\n')"
+```fish
+set SCREENSHOT_BASE64 (base64 < current-screen.png | tr -d '\n')
 
 curl -sS http://127.0.0.1:8000/api/v1/agent/sessions/SESSION_ID/runs \
   -H 'Content-Type: application/json' \
@@ -102,7 +104,7 @@ curl -sS http://127.0.0.1:8000/api/v1/agent/sessions/SESSION_ID/runs \
 
 提交返回 `202`。通过 SSE 等待结果，或使用 GET 恢复：
 
-```bash
+```fish
 curl -N http://127.0.0.1:8000/api/v1/agent/runs/RUN_ID/events \
   -H 'X-Agent-Session-Token: ACCESS_TOKEN'
 
@@ -153,7 +155,7 @@ curl -sS http://127.0.0.1:8000/api/v1/agent/runs/RUN_ID \
 
 默认测试不访问网络、不调用付费模型，也不要求 Docker：
 
-```bash
+```fish
 uv run pytest
 uv run ruff check .
 uv run ruff format --check .
@@ -164,21 +166,31 @@ git diff --check
 
 显式运行真实模型评测（会调用 DeepSeek 并要求 Docker 正常运行）：
 
-```bash
-GUOJING_RUN_DEEPSEEK_EVALUATION=1 uv run pytest -m integration \
+```fish
+env GUOJING_RUN_DEEPSEEK_EVALUATION=1 uv run pytest -m integration \
   tests/evaluation/test_deepseek_integration.py
 ```
 
 评测集包含 20 张确定性生成的手机界面，门槛为状态正确率至少 90%，目标框 IoU ≥ 0.5 的比例至少 80%。
 
-Android 是下一阶段工作，不列入本阶段验收。实现原理和安全边界见 [Deep Agent 后端学习记录](docs/learning/59-deep-agent-backend.md)。
+Android 使用仓库内 Gradle Wrapper 和 SDK Platform 37。`android/gradle/gradle-daemon-jvm.properties` 固定 Gradle 守护进程 JDK 21，Java 编译目标为 17；首次构建可能需要下载对应 JDK：
 
-## 第二阶段
+```fish
+cd android
+./gradlew testDebugUnitTest
+./gradlew lintDebug
+./gradlew assembleDebug assembleDebugAndroidTest
+```
 
-- 删除 Android 旧教程目录、状态图、静态执行引擎和手动截图流程。
-- 接入 Android 11+ 无障碍截图、新会话/run/SSE API。
-- 增加悬浮球、目标框、文字指引和系统 TTS。
-- 接入阿里云 Fun-ASR；不改变本阶段定义的智能体协议。
+完整安装、真机/模拟器 API 地址配置和操作验收见 [Android 启动与测试指南](docs/android-startup-and-testing.md)。实现原理和安全边界见 [Deep Agent 后端学习记录](docs/learning/59-deep-agent-backend.md) 与 [Android 智能体客户端学习记录](docs/learning/60-android-agent-client.md)。
+
+## 后续阶段
+
+Android 截图方向读取已修复后台服务上下文异常，并增加设备回归测试，详见 [客户端学习记录](docs/learning/60-android-agent-client.md)。
+
+- 接入阿里云 Fun-ASR，把语音转成目标文本；临时凭据由后端签发，不在 APK 内写入云密钥。
+- 增加真实设备上的旋转、多窗口和厂商 ROM 回归测试。
+- 保持现有智能体会话/run/SSE 与单步位置协议不变。
 
 ## License
 

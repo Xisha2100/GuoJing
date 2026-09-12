@@ -10,7 +10,7 @@ android {
 
     defaultConfig {
         applicationId = "com.xisha.guojing"
-        minSdk = 26
+        minSdk = 30
         targetSdk = 37
         versionCode = 1
         versionName = "0.1.0"
@@ -58,7 +58,6 @@ dependencies {
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.lifecycle.viewmodel.ktx)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
-    implementation(libs.androidx.navigation.compose)
 
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.ui)
@@ -66,8 +65,8 @@ dependencies {
     implementation(libs.androidx.compose.material3)
 
     implementation(libs.kotlinx.serialization.json)
-    implementation(libs.mlkit.text.recognition)
-    implementation(libs.mlkit.text.recognition.chinese)
+    implementation(libs.okhttp)
+    implementation(libs.okhttp.sse)
 
     testImplementation(libs.junit4)
     testImplementation(libs.kotlinx.coroutines.test)

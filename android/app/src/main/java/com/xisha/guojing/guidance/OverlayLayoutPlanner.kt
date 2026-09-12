@@ -1,6 +1,6 @@
 package com.xisha.guojing.guidance
 
-import com.xisha.guojing.observation.NormalizedScreenBounds
+import com.xisha.guojing.model.NormalizedTarget
 import kotlin.math.min
 
 data class PixelPoint(
@@ -29,7 +29,7 @@ class OverlayLayoutPlanner {
     fun plan(
         screenWidth: Int,
         screenHeight: Int,
-        targetBounds: NormalizedScreenBounds?,
+        targetBounds: NormalizedTarget?,
         density: Float,
         displayWidth: Int = screenWidth,
         displayHeight: Int = screenHeight,
@@ -73,7 +73,7 @@ class OverlayLayoutPlanner {
     private fun cardRect(
         screenWidth: Int,
         screenHeight: Int,
-        targetBounds: NormalizedScreenBounds?,
+        targetBounds: NormalizedTarget?,
         margin: Float,
         height: Float,
     ): PixelRect {
@@ -88,7 +88,7 @@ class OverlayLayoutPlanner {
         )
     }
 
-    private fun NormalizedScreenBounds.toPixelRect(
+    private fun NormalizedTarget.toPixelRect(
         screenWidth: Int,
         screenHeight: Int,
         displayWidth: Int,

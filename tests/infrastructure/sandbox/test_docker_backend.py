@@ -1,3 +1,4 @@
+import socket
 import time
 from typing import Any, cast
 from uuid import uuid4
@@ -98,6 +99,68 @@ def test_upload_rejects_host_and_parent_paths() -> None:
     )
 
     assert [response.error for response in responses] == ["invalid_path", "invalid_path"]
+
+
+class FakeSocket:
+    def __init__(self) -> None:
+        self.received = bytearray()
+        self.shutdown_mode: int | None = None
+
+    def sendall(self, content: bytes) -> None:
+        self.received.extend(content)
+
+    def shutdown(self, mode: int) -> None:
+        self.shutdown_mode = mode
+
+    def recv(self, _size: int) -> bytes:
+        return b""
+
+
+class FakeSocketStream:
+    def __init__(self) -> None:
+        self._sock = FakeSocket()
+        self.closed = False
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class FakeUploadApi(FakeExecApi):
+    def __init__(self) -> None:
+        super().__init__()
+        self.stream = FakeSocketStream()
+        self.exec_create_calls: list[dict[str, Any]] = []
+
+    def exec_create(self, _container_id: str, command: list[str], **_kwargs: Any) -> dict[str, str]:
+        self.exec_create_calls.append(
+            {"container_id": _container_id, "command": command, **_kwargs}
+        )
+        return {"Id": f"exec-{len(self.exec_create_calls)}"}
+
+    def exec_start(self, _exec_id: str, **kwargs: Any) -> Any:
+        if kwargs.get("socket") is True:
+            return self.stream
+        return []
+
+
+class FakeUploadClient:
+    def __init__(self) -> None:
+        self.api = FakeUploadApi()
+
+
+def test_upload_streams_into_writable_tmpfs_without_archive_copy() -> None:
+    client = FakeUploadClient()
+    backend = DockerSandboxBackend(client, FakeContainer())
+
+    responses = backend.upload_files([("/workspace/current-screen.jpg", b"image")])
+
+    assert responses[0].error is None
+    write_call = client.api.exec_create_calls[-1]
+    assert write_call["stdin"] is True
+    assert "cat > /workspace/current-screen.jpg" in write_call["command"][-1]
+    assert client.api.stream._sock.received == b"image"
+    assert client.api.stream._sock.shutdown_mode == socket.SHUT_WR
+    assert client.api.stream.closed is True
 
 
 class RegistryBackend:

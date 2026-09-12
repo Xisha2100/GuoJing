@@ -1,65 +1,61 @@
 package com.xisha.guojing.ui
 
-import androidx.compose.ui.test.assertIsDisplayed
-import androidx.compose.ui.test.ExperimentalTestApi
-import androidx.compose.ui.test.hasText
-import androidx.compose.ui.test.junit4.v2.createComposeRule
+import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
-import androidx.compose.ui.test.performClick
-import androidx.compose.ui.test.waitUntilAtLeastOneExists
-import com.xisha.guojing.androidTestDetail
-import com.xisha.guojing.androidTestSummary
-import com.xisha.guojing.data.TutorialCatalogRepository
-import com.xisha.guojing.data.TutorialDetailRepository
+import com.xisha.guojing.model.TargetApp
+import com.xisha.guojing.session.AgentClientUiState
+import com.xisha.guojing.session.ClientPhase
 import com.xisha.guojing.ui.theme.GuoJingTheme
 import org.junit.Rule
 import org.junit.Test
 
-@OptIn(ExperimentalTestApi::class)
 class GuoJingAppTest {
     @get:Rule
-    val composeRule = createComposeRule()
+    val compose = createComposeRule()
 
     @Test
-    fun catalog_navigates_through_linear_tutorial_to_completion() {
-        composeRule.setContent {
+    fun setup_explains_cloud_upload_and_blocks_start_without_consent() {
+        compose.setContent {
             GuoJingTheme {
-                GuoJingApp(
-                    catalogRepository = TutorialCatalogRepository {
-                        listOf(androidTestSummary)
-                    },
-                    detailRepository = TutorialDetailRepository {
-                        androidTestDetail()
-                    },
+                GuoJingScreen(
+                    state = readyState(uploadConsent = false),
+                    onGoalChanged = {}, onAppSelected = {}, onConsentChanged = {},
+                    onStart = {}, onOpenTarget = {}, onRetry = {}, onEnd = {},
+                    onOpenAccessibilitySettings = {},
                 )
             }
         }
 
-        composeRule.waitUntilAtLeastOneExists(hasText("查看步骤"))
-        composeRule.onNodeWithText("查看步骤").performClick()
-        composeRule.waitUntilAtLeastOneExists(hasText("开始查看步骤"))
-        composeRule.onNodeWithText("教程详情").assertIsDisplayed()
-
-        composeRule.onNodeWithText("开始查看步骤").performClick()
-        composeRule.onNodeWithText("点击“家人”聊天").assertIsDisplayed()
-
-        composeRule.onNodeWithText("我已完成这一步（手动）").performClick()
-        composeRule.onNodeWithText("教程已完成").assertIsDisplayed()
+        compose.onNodeWithText("当前目标应用截图会发送到配置的云端智能体", substring = true)
+            .assertExists()
+        compose.onNodeWithContentDescription("开始界面指引").assertIsNotEnabled()
     }
 
     @Test
-    fun catalog_opens_screenshot_help_without_requiring_a_tutorial() {
-        composeRule.setContent {
+    fun valid_setup_allows_start() {
+        compose.setContent {
             GuoJingTheme {
-                GuoJingApp(
-                    catalogRepository = TutorialCatalogRepository { emptyList() },
-                    detailRepository = TutorialDetailRepository { androidTestDetail() },
+                GuoJingScreen(
+                    state = readyState(uploadConsent = true),
+                    onGoalChanged = {}, onAppSelected = {}, onConsentChanged = {},
+                    onStart = {}, onOpenTarget = {}, onRetry = {}, onEnd = {},
+                    onOpenAccessibilitySettings = {},
                 )
             }
         }
 
-        composeRule.onNodeWithText("截图问一问").performClick()
-        composeRule.onNodeWithText("哪里不会，就截哪里").assertIsDisplayed()
-        composeRule.onNodeWithText("现在不会发送").assertIsDisplayed()
+        compose.onNodeWithContentDescription("开始界面指引").assertIsEnabled()
     }
+
+    private fun readyState(uploadConsent: Boolean) = AgentClientUiState(
+        phase = ClientPhase.Setup,
+        availableApps = listOf(TargetApp("com.tencent.mm", "微信")),
+        selectedPackage = "com.tencent.mm",
+        goal = "找到扫一扫",
+        uploadConsent = uploadConsent,
+        accessibilityConnected = true,
+    )
 }
