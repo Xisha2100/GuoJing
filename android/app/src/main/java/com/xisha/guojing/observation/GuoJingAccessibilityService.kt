@@ -1,6 +1,14 @@
 package com.xisha.guojing.observation
 
 import android.accessibilityservice.AccessibilityService
+import android.app.AlertDialog
+import android.app.KeyguardManager
+import android.text.InputFilter
+import android.view.accessibility.AccessibilityWindowInfo
+import android.widget.EditText
+import android.widget.LinearLayout
+import android.widget.TextView
+import android.widget.Toast
 import android.graphics.Bitmap
 import android.hardware.HardwareBuffer
 import android.view.Display
@@ -10,6 +18,7 @@ import com.xisha.guojing.guidance.AccessibilityGuidanceOverlayController
 import com.xisha.guojing.guidance.OverlayActions
 import com.xisha.guojing.guidance.OverlayPresentation
 import com.xisha.guojing.model.CapturedScreen
+import com.xisha.guojing.model.TargetApp
 import java.io.ByteArrayOutputStream
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
@@ -21,9 +30,19 @@ import kotlinx.coroutines.withContext
 
 class GuoJingAccessibilityService : AccessibilityService(), AccessibilityHost {
     private var overlayController: AccessibilityGuidanceOverlayController? = null
-    private var presentation: OverlayPresentation = OverlayPresentation.Hidden
+    private var presentation: OverlayPresentation = OverlayPresentation.Entry
     private var actions: OverlayActions? = null
     private var captureInProgress = false
+    private var goalDialog: AlertDialog? = null
+    private var previousPackage: String? = null
+
+    override fun showMessage(message: String) {
+        Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+    }
+
+    override fun showSpeechRange(start: Int, end: Int) {
+        overlayController?.showSpeechRange(start, end)
+    }
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -33,6 +52,11 @@ class GuoJingAccessibilityService : AccessibilityService(), AccessibilityHost {
 
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
         if (presentation is OverlayPresentation.Hidden) return
+        val current = foregroundPackage()
+        if (current != previousPackage && goalDialog == null) {
+            previousPackage = current
+            actions?.onTargetLeft()
+        }
         updateOverlayVisibility()
     }
 
@@ -77,6 +101,7 @@ class GuoJingAccessibilityService : AccessibilityService(), AccessibilityHost {
     }
 
     override fun hide() {
+        goalDialog?.dismiss()
         presentation = OverlayPresentation.Hidden
         overlayController?.hide()
     }
@@ -95,6 +120,7 @@ class GuoJingAccessibilityService : AccessibilityService(), AccessibilityHost {
     }
 
     override fun onDestroy() {
+        goalDialog?.dismiss()
         AccessibilityRuntimeBridge.detach(this)
         overlayController?.hide()
         overlayController = null
@@ -103,6 +129,13 @@ class GuoJingAccessibilityService : AccessibilityService(), AccessibilityHost {
     }
 
     private fun updateOverlayVisibility() {
+        if (getSystemService(KeyguardManager::class.java).isKeyguardLocked) {
+            goalDialog?.dismiss()
+            overlayController?.temporarilyHide()
+            actions?.onTargetLeft()
+            return
+        }
+        if (goalDialog != null) return
         if (captureInProgress) {
             overlayController?.temporarilyHide()
             return
@@ -110,6 +143,19 @@ class GuoJingAccessibilityService : AccessibilityService(), AccessibilityHost {
         val value = presentation
         if (value is OverlayPresentation.Hidden) {
             overlayController?.hide()
+            return
+        }
+        val foreground = foregroundPackage()
+        if (foreground == null || foreground == packageName) {
+            overlayController?.temporarilyHide()
+            return
+        }
+        if (value is OverlayPresentation.Entry || foreground != value.targetPackage()) {
+            overlayController?.present(OverlayPresentation.Entry, object : OverlayActions {
+                override fun onPrimaryAction() = openGoalInput()
+                override fun onReplay() {}
+                override fun onEndSession() {}
+            })
             return
         }
         if (foregroundPackage() == value.targetPackage()) {
@@ -127,8 +173,73 @@ class GuoJingAccessibilityService : AccessibilityService(), AccessibilityHost {
         }
     }
 
-    private fun foregroundPackage(): String? =
-        rootInActiveWindow?.packageName?.toString()
+    private fun foregroundWindow(): AccessibilityWindowInfo? = windows.firstOrNull {
+        it.type == AccessibilityWindowInfo.TYPE_APPLICATION && (it.isFocused || it.isActive) &&
+            it.root?.packageName?.toString() !in setOf(packageName, "com.android.systemui")
+    }
+
+    private fun foregroundPackage(): String? = foregroundWindow()?.root?.packageName?.toString()
+
+    private fun openGoalInput() {
+        if (goalDialog != null) return
+        val window = foregroundWindow() ?: return
+        val targetPackage = window.root?.packageName?.toString() ?: return
+        val windowId = window.id
+        val label = runCatching {
+            packageManager.getApplicationLabel(packageManager.getApplicationInfo(targetPackage, 0)).toString()
+        }.getOrDefault(targetPackage)
+        actions?.onTargetLeft()
+        overlayController?.temporarilyHide()
+        val input = EditText(this).apply {
+            hint = "例如：帮我找到扫一扫"
+            filters = arrayOf(InputFilter.LengthFilter(500))
+            minLines = 2
+            maxLines = 5
+        }
+        val body = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            val pad = (20 * resources.displayMetrics.density).toInt()
+            setPadding(pad, pad, pad, pad)
+            addView(TextView(this@GuoJingAccessibilityService).apply { text = "当前应用：$label" })
+            addView(input)
+            addView(TextView(this@GuoJingAccessibilityService).apply {
+                text = "开始后会上传当前截图，生成一步指引。"
+            })
+        }
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("你想完成什么？")
+            .setView(body)
+            .setNegativeButton("取消", null)
+            .setPositiveButton("开始指引", null)
+            .create()
+        dialog.window?.setType(WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY)
+        dialog.setOnDismissListener {
+            goalDialog = null
+            updateOverlayVisibility()
+        }
+        goalDialog = dialog
+        dialog.show()
+        dialog.window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
+        input.requestFocus()
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+            val goal = input.text.toString().trim()
+            if (goal.isBlank()) {
+                input.error = "请先输入目标"
+            } else {
+                getSystemService(android.view.inputmethod.InputMethodManager::class.java)
+                    .hideSoftInputFromWindow(input.windowToken, 0)
+                dialog.dismiss()
+                android.os.Handler(mainLooper).postDelayed({
+                    val current = foregroundWindow()
+                    if (current?.id == windowId && foregroundPackage() == targetPackage) {
+                        actions?.onStartInApp(TargetApp(targetPackage, label), goal)
+                    } else {
+                        Toast.makeText(this, "应用已切换，请重新点击悬浮入口", Toast.LENGTH_SHORT).show()
+                    }
+                }, 250)
+            }
+        }
+    }
 
     private suspend fun takeRawScreenshot(): RawScreenshot = suspendCancellableCoroutine {
         continuation ->
@@ -207,6 +318,7 @@ class GuoJingAccessibilityService : AccessibilityService(), AccessibilityHost {
 
     private fun OverlayPresentation.targetPackage(): String = when (this) {
         OverlayPresentation.Hidden -> ""
+        OverlayPresentation.Entry -> ""
         is OverlayPresentation.Ready -> targetPackage
         is OverlayPresentation.Loading -> targetPackage
         is OverlayPresentation.Guidance -> targetPackage

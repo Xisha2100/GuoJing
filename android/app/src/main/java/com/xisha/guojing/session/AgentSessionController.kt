@@ -13,16 +13,17 @@ import com.xisha.guojing.model.GuidanceDecision
 import com.xisha.guojing.model.GuidanceStatus
 import com.xisha.guojing.model.TargetApp
 import com.xisha.guojing.observation.ScreenCapturePort
-import com.xisha.guojing.platform.TargetAppCatalog
-import com.xisha.guojing.platform.TargetAppLauncher
 import com.xisha.guojing.speech.SpeechPort
 import java.time.Instant
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -44,24 +45,16 @@ enum class ClientPhase {
 
 data class AgentClientUiState(
     val phase: ClientPhase = ClientPhase.Setup,
-    val availableApps: List<TargetApp> = emptyList(),
     val selectedPackage: String? = null,
     val goal: String = "",
-    val uploadConsent: Boolean = false,
+    val entryEnabled: Boolean = true,
     val accessibilityConnected: Boolean = false,
     val targetLabel: String? = null,
     val stepNumber: Int = 0,
     val instruction: String? = null,
     val confidence: Double? = null,
     val message: String? = null,
-) {
-    val canStart: Boolean
-        get() = phase == ClientPhase.Setup &&
-            accessibilityConnected &&
-            selectedPackage != null &&
-            goal.isNotBlank() &&
-            uploadConsent
-}
+)
 
 class AgentSessionController(
     private val repository: AgentRepository,
@@ -69,8 +62,6 @@ class AgentSessionController(
     private val overlay: GuidanceOverlayPort,
     private val speech: SpeechPort,
     private val store: ActiveSessionStore,
-    private val appCatalog: TargetAppCatalog,
-    private val appLauncher: TargetAppLauncher,
     private val scope: CoroutineScope,
     private val nowEpochSeconds: () -> Long = { Instant.now().epochSecond },
 ) : OverlayActions {
@@ -80,8 +71,10 @@ class AgentSessionController(
     private var active: StoredAgentSession? = null
     private var runJob: Job? = null
     private var lastSpokenText: String? = null
+    private var entryEnabled = true
 
     init {
+        speech.setRangeListener { start, end -> overlay.showSpeechRange(start, end) }
         scope.launch {
             capture.connected.collect { connected ->
                 mutableUiState.update { it.copy(accessibilityConnected = connected) }
@@ -90,33 +83,54 @@ class AgentSessionController(
         scope.launch { initialize() }
     }
 
-    fun updateGoal(value: String) {
-        if (active != null) return
-        mutableUiState.update { it.copy(goal = value.take(MAX_GOAL_LENGTH), message = null) }
+    fun setEntryEnabled(enabled: Boolean) {
+        entryEnabled = enabled
+        mutableUiState.update { it.copy(entryEnabled = enabled) }
+        if (!enabled) {
+            endSession()
+            speech.stop()
+            overlay.hide()
+        } else {
+            overlay.present(OverlayPresentation.Entry)
+        }
     }
 
-    fun selectApp(packageName: String) {
-        if (active != null) return
-        if (mutableUiState.value.availableApps.none { it.packageName == packageName }) return
-        mutableUiState.update { it.copy(selectedPackage = packageName, message = null) }
-    }
-
-    fun setUploadConsent(value: Boolean) {
-        if (active != null) return
-        mutableUiState.update { it.copy(uploadConsent = value, message = null) }
-    }
-
-    fun startSession() {
-        if (!mutableUiState.value.canStart || active != null) return
-        mutableUiState.update { it.copy(phase = ClientPhase.CreatingSession, message = null) }
-        scope.launch { createSession() }
-    }
-
-    fun openTargetApp() {
-        active?.let { session ->
-            if (!appLauncher.launch(session.targetPackage)) {
-                mutableUiState.update { it.copy(message = "无法打开目标应用，请确认应用仍已安装") }
+    override fun onStartInApp(app: TargetApp, goal: String) {
+        if (!entryEnabled || !capture.connected.value || goal.isBlank() || goal.length > 500) return
+        if (mutableUiState.value.phase == ClientPhase.CreatingSession) return
+        val previousJob = runJob
+        val previous = active
+        speech.stop()
+        mutableUiState.update { it.copy(phase = ClientPhase.CreatingSession) }
+        runJob = scope.launch {
+            previousJob?.cancelAndJoin()
+            active = null
+            store.clear()
+            previous?.let {
+                runCatching {
+                    withTimeout(5_000) { repository.closeSession(it.sessionId, it.accessToken) }
+                }
             }
+            currentCoroutineContext().ensureActive()
+            mutableUiState.update {
+                it.copy(
+                    selectedPackage = app.packageName,
+                    targetLabel = app.label, goal = goal.trim(),
+                )
+            }
+            createSession()
+            if (mutableUiState.value.phase == ClientPhase.ReadyToCapture) captureAndRun()
+        }
+    }
+
+    override fun onTargetLeft() {
+        speech.stop()
+        val session = active ?: return
+        if (mutableUiState.value.phase == ClientPhase.ShowingGuidance) {
+            mutableUiState.update {
+                it.copy(phase = ClientPhase.ReadyToCapture, instruction = null, confidence = null)
+            }
+            overlay.present(OverlayPresentation.Ready(session.targetPackage, session.targetLabel))
         }
     }
 
@@ -150,30 +164,30 @@ class AgentSessionController(
     }
 
     fun endSession() {
-        val session = active ?: return
+        val session = active
         runJob?.cancel()
         active = null
         speech.stop()
-        overlay.hide()
+        if (entryEnabled) overlay.present(OverlayPresentation.Entry) else overlay.hide()
         lastSpokenText = null
         mutableUiState.update {
             AgentClientUiState(
-                availableApps = it.availableApps,
+                entryEnabled = entryEnabled,
                 accessibilityConnected = it.accessibilityConnected,
             )
         }
         runJob = scope.launch {
             store.clear()
-            session.currentRunId?.let { runId ->
+            session?.currentRunId?.let { runId ->
                 runCatching { repository.cancelRun(runId, session.accessToken) }
             }
-            runCatching { repository.closeSession(session.sessionId, session.accessToken) }
+            session?.let {
+                runCatching { repository.closeSession(it.sessionId, it.accessToken) }
+            }
         }
     }
 
     private suspend fun initialize() {
-        val apps = runCatching { appCatalog.listLaunchableApps() }.getOrDefault(emptyList())
-        mutableUiState.update { it.copy(availableApps = apps) }
         val restored = store.load() ?: return
         if (nowEpochSeconds() - restored.createdAtEpochSeconds >= SESSION_TTL_SECONDS) {
             store.clear()
@@ -188,8 +202,7 @@ class AgentSessionController(
 
     private suspend fun createSession() {
         val state = mutableUiState.value
-        val app = state.availableApps.firstOrNull { it.packageName == state.selectedPackage }
-            ?: return
+        val app = TargetApp(state.selectedPackage ?: return, state.targetLabel ?: return)
         try {
             val handle = repository.createSession(
                 clientSessionId = UUID.randomUUID(),
@@ -224,10 +237,12 @@ class AgentSessionController(
                 )
             }
             overlay.present(OverlayPresentation.Ready(app.packageName, app.label))
-            if (!appLauncher.launch(app.packageName)) {
-                showRetry("无法自动打开目标应用，请手动打开后重试")
-            }
+        } catch (error: CancellationException) {
+            throw error
         } catch (error: Exception) {
+            active = null
+            overlay.present(OverlayPresentation.Entry)
+            overlay.showMessage(userMessage(error, "创建会话失败，请检查网络后重试"))
             mutableUiState.update {
                 it.copy(
                     phase = ClientPhase.Setup,
@@ -463,7 +478,7 @@ class AgentSessionController(
                 overlay.hide()
                 mutableUiState.update {
                     AgentClientUiState(
-                        availableApps = it.availableApps,
+                        entryEnabled = entryEnabled,
                         accessibilityConnected = it.accessibilityConnected,
                         message = "原会话已失效，请重新开始",
                     )

@@ -13,8 +13,6 @@ import com.xisha.guojing.model.GuidanceStatus
 import com.xisha.guojing.model.NormalizedTarget
 import com.xisha.guojing.model.TargetApp
 import com.xisha.guojing.observation.ScreenCapturePort
-import com.xisha.guojing.platform.TargetAppCatalog
-import com.xisha.guojing.platform.TargetAppLauncher
 import com.xisha.guojing.speech.SpeechPort
 import java.util.UUID
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -33,15 +31,12 @@ import org.junit.Test
 @OptIn(ExperimentalCoroutinesApi::class)
 class AgentSessionControllerTest {
     @Test
-    fun session_does_not_capture_until_user_requests_guidance() {
+    fun confirmed_goal_starts_current_app_and_captures_once() {
         val fixture = Fixture()
-        fixture.startSession()
-
-        assertEquals(ClientPhase.ReadyToCapture, fixture.controller.uiState.value.phase)
-        assertEquals(0, fixture.capture.captureCount)
-
-        fixture.controller.requestGuidance()
         fixture.scope.advanceUntilIdle()
+        assertEquals(0, fixture.capture.captureCount)
+        assertEquals(0, fixture.repository.createdSessions)
+        fixture.startSession()
 
         assertEquals(1, fixture.capture.captureCount)
         assertEquals(ClientPhase.ShowingGuidance, fixture.controller.uiState.value.phase)
@@ -59,7 +54,7 @@ class AgentSessionControllerTest {
         fixture.scope.advanceUntilIdle()
 
         assertEquals(ClientPhase.Setup, fixture.controller.uiState.value.phase)
-        assertTrue(fixture.overlay.hidden)
+        assertEquals(OverlayPresentation.Entry, fixture.overlay.last)
         assertEquals(1, fixture.repository.closedSessions)
         assertEquals(null, fixture.store.value)
     }
@@ -69,8 +64,6 @@ class AgentSessionControllerTest {
         val fixture = Fixture()
         fixture.repository.stalled = true
         fixture.startSession()
-        fixture.controller.requestGuidance()
-        fixture.scope.advanceUntilIdle()
 
         assertEquals(ClientPhase.Retry, fixture.controller.uiState.value.phase)
         assertTrue(fixture.overlay.last is OverlayPresentation.Retry)
@@ -82,8 +75,6 @@ class AgentSessionControllerTest {
         val fixture = Fixture()
         fixture.capture.displayCurrent = false
         fixture.startSession()
-        fixture.controller.requestGuidance()
-        fixture.scope.advanceUntilIdle()
 
         assertEquals(ClientPhase.Retry, fixture.controller.uiState.value.phase)
         assertEquals(null, fixture.store.value?.currentRunId)
@@ -95,14 +86,54 @@ class AgentSessionControllerTest {
     fun duplicate_start_click_creates_only_one_session() {
         val fixture = Fixture()
         fixture.scope.advanceUntilIdle()
-        fixture.controller.selectApp("com.tencent.mm")
-        fixture.controller.updateGoal("找到扫一扫")
-        fixture.controller.setUploadConsent(true)
-        fixture.controller.startSession()
-        fixture.controller.startSession()
+        fixture.controller.onStartInApp(TargetApp("com.tencent.mm", "微信"), "找到扫一扫")
+        fixture.controller.onStartInApp(TargetApp("com.tencent.mm", "微信"), "找到扫一扫")
         fixture.scope.advanceUntilIdle()
 
         assertEquals(1, fixture.repository.createdSessions)
+    }
+
+    @Test
+    fun leaving_app_discards_visible_coordinates_but_keeps_session() {
+        val fixture = Fixture()
+        fixture.startSession()
+        fixture.controller.onTargetLeft()
+        assertEquals(ClientPhase.ReadyToCapture, fixture.controller.uiState.value.phase)
+        assertEquals(null, fixture.controller.uiState.value.instruction)
+        assertEquals(0, fixture.repository.closedSessions)
+    }
+
+    @Test
+    fun starting_in_another_app_closes_old_session() {
+        val fixture = Fixture()
+        fixture.startSession()
+        fixture.controller.onStartInApp(TargetApp("com.android.settings", "设置"), "找到蓝牙")
+        fixture.scope.advanceUntilIdle()
+        assertEquals(2, fixture.repository.createdSessions)
+        assertEquals(1, fixture.repository.closedSessions)
+        assertEquals("com.android.settings", fixture.store.value?.targetPackage)
+    }
+
+    @Test
+    fun empty_goal_does_not_create_or_capture() {
+        val fixture = Fixture()
+        fixture.scope.advanceUntilIdle()
+        fixture.controller.onStartInApp(TargetApp("com.tencent.mm", "微信"), " ")
+        fixture.scope.advanceUntilIdle()
+        assertEquals(0, fixture.repository.createdSessions)
+        assertEquals(0, fixture.capture.captureCount)
+    }
+
+    @Test
+    fun disabling_entry_cancels_pending_creation_without_restoring_overlay() {
+        val fixture = Fixture()
+        fixture.scope.advanceUntilIdle()
+        fixture.controller.onStartInApp(TargetApp("com.tencent.mm", "微信"), "找到扫一扫")
+        fixture.controller.setEntryEnabled(false)
+        fixture.scope.advanceUntilIdle()
+        assertEquals(0, fixture.repository.createdSessions)
+        assertEquals(ClientPhase.Setup, fixture.controller.uiState.value.phase)
+        assertTrue(fixture.overlay.hidden)
     }
 }
 
@@ -121,18 +152,13 @@ private class Fixture {
         overlay = overlay,
         speech = speech,
         store = store,
-        appCatalog = TargetAppCatalog { listOf(TargetApp("com.tencent.mm", "微信")) },
-        appLauncher = TargetAppLauncher { true },
         scope = scope,
         nowEpochSeconds = { 1_000L },
     )
 
     fun startSession() {
         scope.advanceUntilIdle()
-        controller.selectApp("com.tencent.mm")
-        controller.updateGoal("找到扫一扫")
-        controller.setUploadConsent(true)
-        controller.startSession()
+        controller.onStartInApp(TargetApp("com.tencent.mm", "微信"), "找到扫一扫")
         scope.advanceUntilIdle()
     }
 }

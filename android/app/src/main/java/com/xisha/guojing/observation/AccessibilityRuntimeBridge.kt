@@ -4,6 +4,7 @@ import com.xisha.guojing.guidance.GuidanceOverlayPort
 import com.xisha.guojing.guidance.OverlayActions
 import com.xisha.guojing.guidance.OverlayPresentation
 import com.xisha.guojing.model.CapturedScreen
+import com.xisha.guojing.model.TargetApp
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -22,6 +23,8 @@ interface ScreenCapturePort {
 }
 
 internal interface AccessibilityHost {
+    fun showMessage(message: String)
+    fun showSpeechRange(start: Int, end: Int)
     suspend fun capture(targetPackage: String): CapturedScreen
 
     fun isDisplayCurrent(
@@ -42,7 +45,7 @@ object AccessibilityRuntimeBridge : ScreenCapturePort, GuidanceOverlayPort, Over
 
     private var host: AccessibilityHost? = null
     private var actions: OverlayActions? = null
-    private var desired: OverlayPresentation = OverlayPresentation.Hidden
+    private var desired: OverlayPresentation = OverlayPresentation.Entry
 
     internal fun attach(host: AccessibilityHost) {
         this.host = host
@@ -58,6 +61,22 @@ object AccessibilityRuntimeBridge : ScreenCapturePort, GuidanceOverlayPort, Over
 
     fun setActions(actions: OverlayActions) {
         this.actions = actions
+    }
+
+    override fun showSpeechRange(start: Int, end: Int) {
+        host?.showSpeechRange(start, end)
+    }
+
+    override fun showMessage(message: String) {
+        host?.showMessage(message)
+    }
+
+    override fun onStartInApp(app: TargetApp, goal: String) {
+        actions?.onStartInApp(app, goal)
+    }
+
+    override fun onTargetLeft() {
+        actions?.onTargetLeft()
     }
 
     override suspend fun capture(targetPackage: String): CapturedScreen =

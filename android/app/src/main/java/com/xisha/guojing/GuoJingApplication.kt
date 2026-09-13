@@ -3,7 +3,6 @@ package com.xisha.guojing
 import android.app.Application
 import com.xisha.guojing.data.HttpAgentRepository
 import com.xisha.guojing.observation.AccessibilityRuntimeBridge
-import com.xisha.guojing.platform.AndroidTargetApps
 import com.xisha.guojing.session.AgentSessionController
 import com.xisha.guojing.session.EncryptedActiveSessionStore
 import com.xisha.guojing.speech.AndroidSpeechPort
@@ -24,7 +23,6 @@ class GuoJingApplication : Application() {
         check(BuildConfig.DEBUG || BuildConfig.API_BASE_URL.startsWith("https://")) {
             "Release API_BASE_URL must use HTTPS"
         }
-        val targetApps = AndroidTargetApps(this)
         speech = AndroidSpeechPort(this)
         agentSessionController = AgentSessionController(
             repository = HttpAgentRepository(BuildConfig.API_BASE_URL),
@@ -32,8 +30,6 @@ class GuoJingApplication : Application() {
             overlay = AccessibilityRuntimeBridge,
             speech = speech,
             store = EncryptedActiveSessionStore(this),
-            appCatalog = targetApps,
-            appLauncher = targetApps,
             scope = applicationScope,
         )
         AccessibilityRuntimeBridge.setActions(agentSessionController)

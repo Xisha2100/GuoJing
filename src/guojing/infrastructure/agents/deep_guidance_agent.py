@@ -52,7 +52,7 @@ class GuidanceDecisionOutput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     status: Literal["continue", "completed", "cannot_determine"]
-    instruction: str | None = Field(default=None, max_length=300)
+    instruction: str | None = Field(default=None, max_length=80)
     target: TargetOutput | None = None
     confidence: float = Field(ge=0.0, le=1.0)
 
@@ -297,6 +297,10 @@ first. Then form one candidate next step and call guidance-reviewer exactly once
 UI analysis and candidate in the task description. Incorporate its review and return
 GuidanceDecisionOutput. Do not call either subagent more than once.
 Target coordinates are normalized against the entire screenshot.
+Keep instruction brief and precise: normally 15-30 Chinese characters, at most 80 characters.
+Use one action + position + control, e.g. 点击右上角的加号.
+Omit introductions, background, reasons, and later steps. Preserve disambiguating names,
+essential conditions, negations, and exact input content; never shorten by cutting text.
 """.strip()
 
 _UI_ANALYST_PROMPT = """
@@ -313,4 +317,7 @@ You receive only a textual UI analysis and one candidate step. Check that the in
 manual action, the target is reported visible, and the normalized rectangle fits that target.
 Return concise corrections. Never assume access to the screenshot, delegate, execute commands, or
 produce a final API response.
+Check wording as well as coordinates: aim for 15-30 Chinese characters, maximum 80.
+Remove filler and explanations while preserving the one action, identifying name, conditions,
+negations and required input. Recommend a complete concise replacement, never a truncated phrase.
 """.strip()

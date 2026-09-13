@@ -35,10 +35,11 @@ class OverlayLayoutPlanner {
         displayHeight: Int = screenHeight,
         viewportLeft: Int = 0,
         viewportTop: Int = 0,
+        contentHeight: Float = 180f * density,
     ): OverlayLayout {
         require(screenWidth > 0 && screenHeight > 0 && displayWidth > 0 && displayHeight > 0)
         val margin = 20f * density
-        val cardHeight = min(180f * density, screenHeight * 0.28f)
+        val cardHeight = min(contentHeight, screenHeight * 0.40f)
         val card = cardRect(
             screenWidth = screenWidth,
             screenHeight = screenHeight,

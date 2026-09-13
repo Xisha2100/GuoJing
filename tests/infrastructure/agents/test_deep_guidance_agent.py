@@ -24,6 +24,18 @@ class FakeSandbox:
         return [FileUploadResponse(path=files[0][0], error=None)]
 
 
+def test_model_instruction_limit_preserves_complete_text() -> None:
+    target = TargetOutput(left=0.1, top=0.1, right=0.2, bottom=0.2)
+    accepted = GuidanceDecisionOutput(
+        status="continue", instruction="点" * 80, target=target, confidence=0.9
+    )
+    assert accepted.instruction == "点" * 80
+    with pytest.raises(ValueError):
+        GuidanceDecisionOutput(
+            status="continue", instruction="点" * 81, target=target, confidence=0.9
+        )
+
+
 def test_disables_implicit_general_purpose_subagent(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

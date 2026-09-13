@@ -1,6 +1,7 @@
 package com.xisha.guojing.guidance
 
 import android.content.Context
+import android.animation.ValueAnimator
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
@@ -12,7 +13,6 @@ import android.graphics.drawable.GradientDrawable
 import android.text.Layout
 import android.text.StaticLayout
 import android.text.TextPaint
-import android.text.TextUtils
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
@@ -29,18 +29,24 @@ class AccessibilityGuidanceOverlayController(
 ) {
     private val windowManager = context.getSystemService(WindowManager::class.java)
     private val instructionView = GuidanceOverlayView(context)
-    private val controls = ControlView(context)
+    private val controls = ControlView(context) { instructionView.nextPage() }
     private var instructionAttached = false
     private var controlsAttached = false
     private var current: OverlayPresentation = OverlayPresentation.Hidden
 
+    fun showSpeechRange(start: Int, end: Int) {
+        instructionView.follow(start)
+    }
+
     fun present(value: OverlayPresentation, actions: OverlayActions) {
+        if (current == value && controlsAttached && controls.visibility == View.VISIBLE) return
         current = value
         if (value is OverlayPresentation.Hidden) {
             hide()
             return
         }
         if (value is OverlayPresentation.Guidance) {
+            if (instructionView.guidance != value) instructionView.resetScroll()
             instructionView.guidance = value
             attachInstruction()
             instructionView.visibility = View.VISIBLE
@@ -54,6 +60,7 @@ class AccessibilityGuidanceOverlayController(
     }
 
     fun temporarilyHide() {
+        instructionView.stopScroll()
         instructionView.visibility = View.GONE
         controls.visibility = View.GONE
     }
@@ -67,6 +74,7 @@ class AccessibilityGuidanceOverlayController(
     }
 
     fun hide() {
+        instructionView.resetScroll()
         if (instructionAttached) {
             windowManager.removeView(instructionView)
             instructionAttached = false
@@ -127,6 +135,10 @@ class AccessibilityGuidanceOverlayController(
                 (metrics.widthPixels - dp(CONTROL_WIDTH_DP + 16)).coerceAtLeast(dp(16))
             }
             y = (metrics.heightPixels * 0.42f).toInt()
+            if (value == OverlayPresentation.Entry) {
+                gravity = Gravity.TOP or Gravity.END
+                x = dp(12)
+            }
             title = "老牌子操作胶囊"
         }
     }
@@ -138,7 +150,7 @@ class AccessibilityGuidanceOverlayController(
     }
 }
 
-private class ControlView(context: Context) : LinearLayout(context) {
+private class ControlView(context: Context, onNextText: () -> Unit) : LinearLayout(context) {
     private val status = TextView(context).apply {
         setTextColor(Color.rgb(38, 31, 27))
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 17f)
@@ -148,6 +160,10 @@ private class ControlView(context: Context) : LinearLayout(context) {
     private val primary = Button(context)
     private val replay = Button(context).apply { text = "重播" }
     private val end = Button(context).apply { text = "结束" }
+    private val nextText = Button(context).apply {
+        text = "查看后文"
+        setOnClickListener { onNextText() }
+    }
 
     init {
         orientation = VERTICAL
@@ -169,11 +185,18 @@ private class ControlView(context: Context) : LinearLayout(context) {
                 addView(end)
             },
         )
+        addView(nextText)
     }
 
     fun bind(value: OverlayPresentation, actions: OverlayActions) {
         when (value) {
             OverlayPresentation.Hidden -> Unit
+            OverlayPresentation.Entry -> {
+                status.text = "当前应用"
+                primary.text = "帮我"
+                primary.isEnabled = true
+                replay.visibility = GONE
+            }
             is OverlayPresentation.Ready -> {
                 status.text = "已打开 ${value.targetLabel} 后，点击开始"
                 primary.text = "开始识别"
@@ -209,6 +232,9 @@ private class ControlView(context: Context) : LinearLayout(context) {
                 replay.visibility = VISIBLE
             }
         }
+        status.visibility = if (value == OverlayPresentation.Entry) GONE else VISIBLE
+        end.visibility = if (value == OverlayPresentation.Entry) GONE else VISIBLE
+        nextText.visibility = if (value is OverlayPresentation.Guidance) VISIBLE else GONE
         primary.setOnClickListener { actions.onPrimaryAction() }
         replay.setOnClickListener { actions.onReplay() }
         end.setOnClickListener { actions.onEndSession() }
@@ -218,8 +244,44 @@ private class ControlView(context: Context) : LinearLayout(context) {
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 }
 
-private class GuidanceOverlayView(context: Context) : View(context) {
+internal class GuidanceOverlayView(context: Context) : View(context) {
     var guidance: OverlayPresentation.Guidance? = null
+    internal var bodyLayout: StaticLayout? = null
+        private set
+    internal var viewportHeight = 1f
+        private set
+    internal var scrollYText = 0f
+        private set
+    private var animator: ValueAnimator? = null
+    private var pendingOffset = 0
+
+    fun stopScroll() { animator?.cancel(); animator = null }
+    fun resetScroll() { stopScroll(); scrollYText = 0f; pendingOffset = 0; bodyLayout = null }
+    fun nextPage() {
+        val layout = bodyLayout ?: return
+        val maximum = (layout.height - viewportHeight).coerceAtLeast(0f)
+        animateTo(if (scrollYText >= maximum) 0f else (scrollYText + viewportHeight * 0.8f).coerceAtMost(maximum))
+    }
+    fun follow(offset: Int) {
+        pendingOffset = offset
+        val layout = bodyLayout ?: return
+        val line = layout.getLineForOffset(offset.coerceIn(0, layout.text.length))
+        val top = layout.getLineTop(line).toFloat()
+        val bottom = layout.getLineBottom(line).toFloat()
+        if (offset == 0) animateTo(0f)
+        else if (top < scrollYText || bottom > scrollYText + viewportHeight) {
+            animateTo((top - viewportHeight * 0.25f).coerceAtLeast(0f)
+                .coerceAtMost((layout.height - viewportHeight).coerceAtLeast(0f)))
+        }
+    }
+    private fun animateTo(value: Float) {
+        stopScroll()
+        animator = ValueAnimator.ofFloat(scrollYText, value).apply {
+            duration = 220
+            addUpdateListener { scrollYText = it.animatedValue as Float; invalidate() }
+            start()
+        }
+    }
     private val planner = OverlayLayoutPlanner()
     private val density = resources.displayMetrics.density
     private val targetPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -260,6 +322,10 @@ private class GuidanceOverlayView(context: Context) : View(context) {
         if (width <= 0 || height <= 0) return
         val location = IntArray(2)
         getLocationOnScreen(location)
+        val textWidth = (width - 88f * density).toInt().coerceAtLeast(1)
+        val measured = StaticLayout.Builder.obtain(
+            current.instruction, 0, current.instruction.length, instructionPaint, textWidth,
+        ).setIncludePad(false).build()
         val layout = planner.plan(
             screenWidth = width,
             screenHeight = height,
@@ -269,6 +335,7 @@ private class GuidanceOverlayView(context: Context) : View(context) {
             displayHeight = current.displayHeight,
             viewportLeft = location[0],
             viewportTop = location[1],
+            contentHeight = measured.height + 86f * density,
         )
         layout.targetRect?.let { target ->
             val rect = target.asRectF()
@@ -290,10 +357,24 @@ private class GuidanceOverlayView(context: Context) : View(context) {
         canvas.drawRoundRect(rect, 24f * density, 24f * density, cardPaint)
         canvas.drawRoundRect(rect, 24f * density, 24f * density, borderPaint)
         val padding = 24f * density
-        val contentWidth = (card.right - card.left - padding * 2).toInt()
+        val contentWidth = (card.right - card.left - padding * 2).toInt().coerceAtLeast(1)
         var y = card.top + 18f * density
         y += drawText(canvas, "第 ${current.stepNumber} 步", stepPaint, card.left + padding, y, contentWidth, 1)
-        drawText(canvas, current.instruction, instructionPaint, card.left + padding, y + 6f * density, contentWidth, 3)
+        y += 6f * density
+        val oldLayout = bodyLayout
+        if (oldLayout == null || oldLayout.width != contentWidth || oldLayout.text.toString() != current.instruction) {
+            bodyLayout = StaticLayout.Builder.obtain(
+                current.instruction, 0, current.instruction.length, instructionPaint, contentWidth,
+            ).setIncludePad(false).build()
+        }
+        viewportHeight = (card.bottom - padding / 2 - y).coerceAtLeast(1f)
+        val layout = requireNotNull(bodyLayout)
+        canvas.save()
+        canvas.clipRect(card.left + padding, y, card.right - padding, card.bottom - padding / 2)
+        canvas.translate(card.left + padding, y - scrollYText)
+        layout.draw(canvas)
+        canvas.restore()
+        if (oldLayout == null) post { follow(pendingOffset) }
     }
 
     private fun drawText(
@@ -308,8 +389,6 @@ private class GuidanceOverlayView(context: Context) : View(context) {
         val layout = StaticLayout.Builder.obtain(text, 0, text.length, paint, width)
             .setAlignment(Layout.Alignment.ALIGN_NORMAL)
             .setIncludePad(false)
-            .setEllipsize(TextUtils.TruncateAt.END)
-            .setEllipsizedWidth(width)
             .setMaxLines(maxLines)
             .build()
         canvas.save()

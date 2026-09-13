@@ -1,61 +1,33 @@
 package com.xisha.guojing.ui
 
-import androidx.compose.ui.test.assertIsEnabled
-import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
-import androidx.compose.ui.test.onNodeWithContentDescription
-import androidx.compose.ui.test.onNodeWithText
-import com.xisha.guojing.model.TargetApp
 import com.xisha.guojing.session.AgentClientUiState
-import com.xisha.guojing.session.ClientPhase
 import com.xisha.guojing.ui.theme.GuoJingTheme
 import org.junit.Rule
 import org.junit.Test
+import org.junit.Assert.assertTrue
 
 class GuoJingAppTest {
-    @get:Rule
-    val compose = createComposeRule()
+    @get:Rule val compose = createComposeRule()
 
     @Test
-    fun setup_explains_cloud_upload_and_blocks_start_without_consent() {
+    fun home_explains_floating_entry_without_app_selection() {
         compose.setContent {
-            GuoJingTheme {
-                GuoJingScreen(
-                    state = readyState(uploadConsent = false),
-                    onGoalChanged = {}, onAppSelected = {}, onConsentChanged = {},
-                    onStart = {}, onOpenTarget = {}, onRetry = {}, onEnd = {},
-                    onOpenAccessibilitySettings = {},
-                )
-            }
+            GuoJingTheme { GuoJingScreen(AgentClientUiState(), {}, {}, {}) }
         }
-
-        compose.onNodeWithText("当前目标应用截图会发送到配置的云端智能体", substring = true)
-            .assertExists()
-        compose.onNodeWithContentDescription("开始界面指引").assertIsNotEnabled()
+        compose.onNodeWithText("选择要操作的应用").assertDoesNotExist()
+        compose.onNodeWithText("请先开启界面指引服务").assertExists()
+        compose.onNodeWithText("显示悬浮入口").assertExists()
     }
 
     @Test
-    fun valid_setup_allows_start() {
+    fun permission_button_opens_settings_callback() {
+        var opened = false
         compose.setContent {
-            GuoJingTheme {
-                GuoJingScreen(
-                    state = readyState(uploadConsent = true),
-                    onGoalChanged = {}, onAppSelected = {}, onConsentChanged = {},
-                    onStart = {}, onOpenTarget = {}, onRetry = {}, onEnd = {},
-                    onOpenAccessibilitySettings = {},
-                )
-            }
+            GuoJingTheme { GuoJingScreen(AgentClientUiState(), {}, {}, { opened = true }) }
         }
-
-        compose.onNodeWithContentDescription("开始界面指引").assertIsEnabled()
+        compose.onNodeWithText("去开启").performClick()
+        assertTrue(opened)
     }
-
-    private fun readyState(uploadConsent: Boolean) = AgentClientUiState(
-        phase = ClientPhase.Setup,
-        availableApps = listOf(TargetApp("com.tencent.mm", "微信")),
-        selectedPackage = "com.tencent.mm",
-        goal = "找到扫一扫",
-        uploadConsent = uploadConsent,
-        accessibilityConnected = true,
-    )
 }
