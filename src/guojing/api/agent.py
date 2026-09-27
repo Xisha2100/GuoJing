@@ -24,10 +24,10 @@ from guojing.application.agent.service import (
 )
 from guojing.domain.agent_guidance import (
     AgentRun,
-    AgentRunStatus,
     AgentSession,
     GuidanceDecision,
 )
+from guojing.domain.device_access import AccessDenied, DeviceIdentity
 
 router = APIRouter(prefix="/api/v1/agent", tags=["visual guidance agent"])
 
@@ -172,6 +172,7 @@ async def create_session(payload: SessionCreateRequest, request: Request) -> Ses
             client_session_id=payload.client_session_id,
             goal=payload.goal,
             target_package=payload.target_package,
+            device_id=_device(request).device_id,
         )
     except AgentSessionConflict as error:
         raise HTTPException(status_code=409, detail="client_session_id already exists") from error
@@ -190,7 +191,7 @@ async def create_run(
     token: AgentToken = None,
 ) -> RunAcceptedResponse:
     service = _service(request)
-    session = _require_session(service, session_id, token)
+    session = _require_session(service, session_id, token, _device(request))
     image = _decode_and_validate_image(payload)
     digest = sha256(image).hexdigest()
     try:
@@ -212,15 +213,20 @@ async def create_run(
         or run.screen_height != payload.screen_height
     ):
         raise HTTPException(status_code=409, detail="client_turn_id payload does not match")
-    if not created and run.status is AgentRunStatus.FAILED and run.retryable:
-        run = service.retry_run(run)
-        created = True
     if created:
+        try:
+            if not await request.app.state.is_ready():
+                raise AccessDenied("service_unavailable", 503, 5)
+            request.app.state.device_access.reserve(run.run_id, _device(request).device_id)
+        except AccessDenied as error:
+            service.fail_run(run, error.code, retryable=True)
+            raise
         try:
             await _coordinator(request).submit(run=run, session=session, screenshot=image)
         except AgentQueueFull as error:
+            request.app.state.device_access.finish(run.run_id)
             service.fail_run(run, "queue_full", retryable=True)
-            raise HTTPException(status_code=429, detail="agent run queue is full") from error
+            raise AccessDenied("service_busy", 429, 5) from error
     return RunAcceptedResponse(
         run_id=run.run_id,
         status=run.status.value,
@@ -228,9 +234,28 @@ async def create_run(
     )
 
 
+def _device(request: Request) -> DeviceIdentity:
+    return cast(DeviceIdentity, request.state.device)
+
+
+@router.get("/sessions/{session_id}/turns/{client_turn_id}", response_model=RunResponse)
+async def get_turn(
+    session_id: UUID,
+    client_turn_id: UUID,
+    request: Request,
+    token: AgentToken = None,
+) -> RunResponse:
+    service = _service(request)
+    _require_session(service, session_id, token, _device(request))
+    run = service.get_run_by_turn(session_id, client_turn_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="agent run was not found")
+    return RunResponse.from_domain(run)
+
+
 @router.get("/runs/{run_id}", response_model=RunResponse)
 async def get_run(run_id: UUID, request: Request, token: AgentToken = None) -> RunResponse:
-    _session, run = _require_run(_service(request), run_id, token)
+    _session, run = _require_run(_service(request), run_id, token, _device(request))
     return RunResponse.from_domain(run)
 
 
@@ -240,10 +265,15 @@ async def get_run_events(
     request: Request,
     token: AgentToken = None,
 ) -> StreamingResponse:
-    _require_run(_service(request), run_id, token)
+    _require_run(_service(request), run_id, token, _device(request))
 
     async def stream() -> AsyncIterator[str]:
         async for run in _coordinator(request).events(run_id):
+            try:
+                request.app.state.device_access.require_active(_device(request).device_id)
+                _require_run(_service(request), run_id, token, _device(request))
+            except (AccessDenied, HTTPException):
+                return
             payload = RunResponse.from_domain(run).model_dump(mode="json")
             yield f"event: {run.status.value}\ndata: {json.dumps(payload)}\n\n"
 
@@ -260,7 +290,7 @@ async def cancel_run(
     request: Request,
     token: AgentToken = None,
 ) -> Response:
-    _session, run = _require_run(_service(request), run_id, token)
+    _session, run = _require_run(_service(request), run_id, token, _device(request))
     await _coordinator(request).cancel(run)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -272,7 +302,7 @@ async def close_session(
     token: AgentToken = None,
 ) -> Response:
     service = _service(request)
-    session = _require_session(service, session_id, token)
+    session = _require_session(service, session_id, token, _device(request))
     service.close_session(session)
     await _coordinator(request).destroy_session(session_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -282,9 +312,13 @@ def _require_session(
     service: AgentService,
     session_id: UUID,
     token: str | None,
+    device: DeviceIdentity,
 ) -> AgentSession:
     try:
-        return service.require_session(session_id, token or "")
+        session = service.require_session(session_id, token or "")
+        if session.device_id != device.device_id:
+            raise AgentSessionNotFound
+        return session
     except AgentSessionNotFound as error:
         raise HTTPException(status_code=404, detail="agent session was not found") from error
 
@@ -293,9 +327,13 @@ def _require_run(
     service: AgentService,
     run_id: UUID,
     token: str | None,
+    device: DeviceIdentity,
 ) -> tuple[AgentSession, AgentRun]:
     try:
-        return service.get_authorized_run(run_id, token or "")
+        session, run = service.get_authorized_run(run_id, token or "")
+        if session.device_id != device.device_id:
+            raise AgentRunNotFound
+        return session, run
     except AgentRunNotFound as error:
         raise HTTPException(status_code=404, detail="agent run was not found") from error
 

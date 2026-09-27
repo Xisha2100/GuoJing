@@ -41,6 +41,7 @@ data class StoredAgentSession(
     val displayWidth: Int?,
     val displayHeight: Int?,
     val rotation: Int?,
+    val pendingTurnId: UUID? = null,
 )
 
 interface ActiveSessionStore {
@@ -58,26 +59,26 @@ class EncryptedActiveSessionStore(context: Context) : ActiveSessionStore {
     override suspend fun load(): StoredAgentSession? = withContext(Dispatchers.IO) {
         val encrypted = preferences.getString(ACTIVE_SESSION, null) ?: return@withContext null
         val plaintext = cipher.decrypt(encrypted) ?: run {
-            preferences.edit().remove(ACTIVE_SESSION).apply()
+            check(preferences.edit().remove(ACTIVE_SESSION).commit())
             return@withContext null
         }
         runCatching { decode(plaintext) }.getOrElse {
-            preferences.edit().remove(ACTIVE_SESSION).apply()
+            check(preferences.edit().remove(ACTIVE_SESSION).commit())
             null
         }
     }
 
     override suspend fun save(value: StoredAgentSession) {
         withContext(Dispatchers.IO) {
-            preferences.edit()
+            check(preferences.edit()
                 .putString(ACTIVE_SESSION, cipher.encrypt(encode(value)))
-                .apply()
+                .commit())
         }
     }
 
     override suspend fun clear() {
         withContext(Dispatchers.IO) {
-            preferences.edit().remove(ACTIVE_SESSION).apply()
+            check(preferences.edit().remove(ACTIVE_SESSION).commit())
         }
     }
 
@@ -94,6 +95,7 @@ class EncryptedActiveSessionStore(context: Context) : ActiveSessionStore {
         put("display_width", value.displayWidth)
         put("display_height", value.displayHeight)
         put("rotation", value.rotation)
+        put("pending_turn_id", value.pendingTurnId?.toString())
         value.lastDecision?.let { decision ->
             put(
                 "last_decision",
@@ -148,6 +150,7 @@ class EncryptedActiveSessionStore(context: Context) : ActiveSessionStore {
             displayWidth = root.intOrNull("display_width"),
             displayHeight = root.intOrNull("display_height"),
             rotation = root.intOrNull("rotation"),
+            pendingTurnId = root.stringOrNull("pending_turn_id")?.let(UUID::fromString),
         )
     }
 
@@ -172,7 +175,7 @@ class EncryptedActiveSessionStore(context: Context) : ActiveSessionStore {
     }
 }
 
-private class AndroidSessionCipher {
+internal class AndroidSessionCipher {
     fun encrypt(value: String): String {
         val cipher = Cipher.getInstance(TRANSFORMATION)
         cipher.init(Cipher.ENCRYPT_MODE, key())

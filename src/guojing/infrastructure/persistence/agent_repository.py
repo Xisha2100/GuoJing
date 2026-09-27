@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from typing import Any, cast, overload
 from uuid import UUID, uuid4
 
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import IntegrityError
 
@@ -24,6 +24,7 @@ from guojing.infrastructure.persistence.models import (
     AgentRunRecord,
     AgentSessionRecord,
     GuidanceStepRecord,
+    RunReservationRecord,
 )
 
 
@@ -100,32 +101,35 @@ class SqlAlchemyAgentRepository:
             return [_to_step(record) for record in records]
 
     def add_step(self, step: GuidanceStep) -> None:
-        target_json = None
-        if step.decision.target is not None:
-            target_json = json.dumps(
-                {
-                    "left": step.decision.target.left,
-                    "top": step.decision.target.top,
-                    "right": step.decision.target.right,
-                    "bottom": step.decision.target.bottom,
-                },
-                separators=(",", ":"),
-            )
         with self._database.new_session() as db:
-            db.add(
-                GuidanceStepRecord(
-                    step_id=str(uuid4()),
-                    session_id=str(step.session_id),
-                    run_id=str(step.run_id),
-                    step_number=step.step_number,
-                    status=step.decision.status.value,
-                    instruction=step.decision.instruction,
-                    target_json=target_json,
-                    confidence=step.decision.confidence,
-                    created_at=step.created_at,
+            db.add(_step_record(step))
+            db.commit()
+
+    def complete_run(self, run: AgentRun, step: GuidanceStep, session: AgentSession) -> None:
+        with self._database.new_session() as db, db.begin():
+            db.merge(_run_record(run))
+            db.add(_step_record(step))
+            db.merge(_session_record(session))
+
+    def purge_expired(self, now: datetime) -> list[UUID]:
+        with self._database.new_session() as db, db.begin():
+            ids = list(
+                db.scalars(
+                    select(AgentSessionRecord.session_id).where(
+                        AgentSessionRecord.expires_at <= now,
+                    )
                 )
             )
-            db.commit()
+            if ids:
+                runs = select(AgentRunRecord.run_id).where(AgentRunRecord.session_id.in_(ids))
+                db.execute(
+                    delete(RunReservationRecord).where(RunReservationRecord.run_id.in_(runs))
+                )
+                db.execute(delete(AgentSessionRecord).where(AgentSessionRecord.session_id.in_(ids)))
+        if ids and self._database.engine.dialect.name == "sqlite":
+            with self._database.engine.connect() as connection:
+                connection.exec_driver_sql("PRAGMA wal_checkpoint(TRUNCATE)")
+        return [UUID(value) for value in ids]
 
     def fail_incomplete_runs(self, *, completed_at: datetime) -> int:
         with self._database.new_session() as db:
@@ -174,6 +178,7 @@ def _session_record(value: AgentSession) -> AgentSessionRecord:
         created_at=value.created_at,
         updated_at=value.updated_at,
         expires_at=value.expires_at,
+        device_id=str(value.device_id) if value.device_id else None,
     )
 
 
@@ -218,6 +223,7 @@ def _to_session(record: AgentSessionRecord) -> AgentSession:
         created_at=_as_utc(record.created_at),
         updated_at=_as_utc(record.updated_at),
         expires_at=_as_utc(record.expires_at),
+        device_id=UUID(record.device_id) if record.device_id else None,
     )
 
 
@@ -293,3 +299,20 @@ def _as_utc(value: datetime | None) -> datetime | None:
     if value.tzinfo is None:
         return value.replace(tzinfo=UTC)
     return value.astimezone(UTC)
+
+
+def _step_record(step: GuidanceStep) -> GuidanceStepRecord:
+    from dataclasses import asdict
+
+    target = json.dumps(asdict(step.decision.target)) if step.decision.target else None
+    return GuidanceStepRecord(
+        step_id=str(uuid4()),
+        session_id=str(step.session_id),
+        run_id=str(step.run_id),
+        step_number=step.step_number,
+        status=step.decision.status.value,
+        instruction=step.decision.instruction,
+        target_json=target,
+        confidence=step.decision.confidence,
+        created_at=step.created_at,
+    )

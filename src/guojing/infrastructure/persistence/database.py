@@ -14,7 +14,7 @@ class Database:
 
     def __init__(self, database_url: str) -> None:
         _ensure_sqlite_parent_exists(database_url)
-        self.engine = create_engine(database_url)
+        self.engine = create_engine(database_url, hide_parameters=True)
         if self.engine.dialect.name == "sqlite":
             event.listen(self.engine, "connect", _configure_sqlite_connection)
         self._session_factory = sessionmaker(
@@ -50,6 +50,7 @@ def _configure_sqlite_connection(
     cursor = dbapi_connection.cursor()
     cursor.execute("PRAGMA foreign_keys=ON")
     cursor.execute("PRAGMA busy_timeout=5000")
+    cursor.execute("PRAGMA secure_delete=ON")
     cursor.close()
 
 

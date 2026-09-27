@@ -1,6 +1,31 @@
+import java.net.URI
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.compose.compiler)
+}
+
+val releaseApiUrl = providers.gradleProperty("GUOJING_API_BASE_URL")
+val signingValues = listOf("STORE_FILE", "STORE_PASSWORD", "KEY_ALIAS", "KEY_PASSWORD")
+    .associateWith { providers.environmentVariable("GUOJING_SIGNING_$it").orNull }
+
+val validateReleaseConfiguration by tasks.registering {
+    doLast {
+        val url = runCatching { URI(releaseApiUrl.get()) }.getOrNull()
+        require(url?.scheme == "https" && url.host != null && url.host.contains('.') &&
+            !url.host.endsWith(".invalid") && url.host != "localhost" &&
+            url.rawUserInfo == null && url.rawQuery == null && url.rawFragment == null &&
+            (url.path.isNullOrEmpty() || url.path == "/")) {
+            "Release requires GUOJING_API_BASE_URL with a real HTTPS origin"
+        }
+        require(signingValues.values.all { !it.isNullOrBlank() }) {
+            "Release requires all GUOJING_SIGNING_* environment variables"
+        }
+        require(file(requireNotNull(signingValues["STORE_FILE"])).isFile) { "Signing keystore missing" }
+    }
+}
+tasks.configureEach {
+    if (name == "preReleaseBuild") dependsOn(validateReleaseConfiguration)
 }
 
 android {
@@ -18,6 +43,17 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    signingConfigs {
+        if (signingValues.values.all { !it.isNullOrBlank() }) {
+            create("release") {
+                storeFile = file(requireNotNull(signingValues["STORE_FILE"]))
+                storePassword = signingValues["STORE_PASSWORD"]
+                keyAlias = signingValues["KEY_ALIAS"]
+                keyPassword = signingValues["KEY_PASSWORD"]
+            }
+        }
+    }
+
     buildTypes {
         debug {
             val apiBaseUrl = providers.gradleProperty("GUOJING_DEBUG_API_BASE_URL")
@@ -25,6 +61,7 @@ android {
             buildConfigField("String", "API_BASE_URL", "\"$apiBaseUrl\"")
         }
         release {
+            signingConfig = signingConfigs.findByName("release")
             val apiBaseUrl = providers.gradleProperty("GUOJING_API_BASE_URL")
                 .getOrElse("https://api.invalid")
             buildConfigField("String", "API_BASE_URL", "\"$apiBaseUrl\"")

@@ -7,6 +7,7 @@ import com.xisha.guojing.session.AgentSessionController
 class AgentViewModel(private val controller: AgentSessionController) : ViewModel() {
     val uiState = controller.uiState
     fun setEntryEnabled(value: Boolean) = controller.setEntryEnabled(value)
+    fun saveInvitation(value: String) = controller.saveInvitation(value)
     fun endSession() = controller.endSession()
 
     companion object {

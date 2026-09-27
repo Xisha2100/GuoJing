@@ -4,6 +4,8 @@
 !.env.example
 *.key
 *.pem
+*.jks
+*.keystore
 local.properties
 
 # macOS and editor metadata
@@ -30,6 +32,9 @@ build/
 # Local backend state
 *.db
 *.db-journal
+*.db-wal
+*.db-shm
+*.process.lock
 *.sqlite
 *.sqlite3
 *.log

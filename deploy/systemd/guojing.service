@@ -1,0 +1,31 @@
+[Unit]
+Description=GuoJing pilot API (single process)
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=120
+StartLimitBurst=3
+
+[Service]
+Type=simple
+User=guojing
+Group=guojing
+WorkingDirectory=/opt/guojing/current
+EnvironmentFile=/etc/guojing/production.env
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/guojing/current/.venv/bin/uvicorn guojing.main:app --host 127.0.0.1 --port 8000 --workers 1 --no-access-log --proxy-headers --forwarded-allow-ips=127.0.0.1 --timeout-graceful-shutdown 10
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=20
+KillSignal=SIGTERM
+UMask=0077
+LimitCORE=0
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/guojing/data
+MemoryMax=1800M
+TasksMax=128
+
+[Install]
+WantedBy=multi-user.target

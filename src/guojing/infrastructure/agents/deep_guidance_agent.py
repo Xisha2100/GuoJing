@@ -21,6 +21,7 @@ from langchain_openai import ChatOpenAI
 from langsmith import tracing_context
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from guojing.application.agent.usage import ModelUsage, current_usage
 from guojing.domain.agent_guidance import (
     AgentSession,
     GuidanceDecision,
@@ -29,6 +30,7 @@ from guojing.domain.agent_guidance import (
     NormalizedTarget,
 )
 from guojing.domain.guidance_language import allows_english, enforce_guidance_language
+from guojing.infrastructure.agents.usage_callback import UsageCallback
 
 
 class TargetOutput(BaseModel):
@@ -113,6 +115,7 @@ class DeepGuidanceAgent:
             model=model_name,
             timeout=model_timeout_seconds,
             max_retries=0,
+            max_tokens=2048,
             use_responses_api=False,
             temperature=0,
             # DeepSeek V4 enables thinking mode by default. LangChain's
@@ -167,7 +170,12 @@ class DeepGuidanceAgent:
         with tracing_context(enabled=False):
             result = await agent.ainvoke(
                 {"messages": [message]},
-                config={"recursion_limit": 24},
+                config={
+                    "recursion_limit": 24,
+                    "callbacks": [
+                        UsageCallback(current_usage.get() or ModelUsage(lambda: None)),
+                    ],
+                },
             )
         _require_fixed_subagents(result)
         raw = result.get("structured_response")

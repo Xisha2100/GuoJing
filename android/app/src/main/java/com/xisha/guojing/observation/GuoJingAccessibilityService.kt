@@ -106,6 +106,12 @@ class GuoJingAccessibilityService : AccessibilityService(), AccessibilityHost {
         overlayController?.hide()
     }
 
+    override fun isTargetCurrent(app: TargetApp): Boolean {
+        val current = foregroundWindow() ?: return false
+        return current.root?.packageName?.toString() == app.packageName &&
+            (app.windowId == null || current.id == app.windowId)
+    }
+
     override fun isDisplayCurrent(
         targetPackage: String,
         displayWidth: Int,
@@ -232,7 +238,7 @@ class GuoJingAccessibilityService : AccessibilityService(), AccessibilityHost {
                 android.os.Handler(mainLooper).postDelayed({
                     val current = foregroundWindow()
                     if (current?.id == windowId && foregroundPackage() == targetPackage) {
-                        actions?.onStartInApp(TargetApp(targetPackage, label), goal)
+                        actions?.onStartInApp(TargetApp(targetPackage, label, window.id), goal)
                     } else {
                         Toast.makeText(this, "应用已切换，请重新点击悬浮入口", Toast.LENGTH_SHORT).show()
                     }

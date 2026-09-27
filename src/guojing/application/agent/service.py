@@ -55,6 +55,7 @@ class AgentService:
         client_session_id: UUID,
         goal: str,
         target_package: str,
+        device_id: UUID | None = None,
     ) -> tuple[AgentSession, str]:
         if self._repository.get_session_by_client_id(client_session_id) is not None:
             raise AgentSessionConflict("client_session_id already exists")
@@ -72,6 +73,7 @@ class AgentService:
             created_at=now,
             updated_at=now,
             expires_at=now + self._session_ttl,
+            device_id=device_id,
         )
         if not self._repository.create_session(session):
             raise AgentSessionConflict("client_session_id already exists")
@@ -145,6 +147,15 @@ class AgentService:
     def get_session(self, session_id: UUID) -> AgentSession | None:
         return self._repository.get_session(session_id)
 
+    def get_run_by_turn(self, session_id: UUID, client_turn_id: UUID) -> AgentRun | None:
+        return self._repository.get_run_by_turn(session_id, client_turn_id)
+
+    def purge_expired(self) -> list[UUID]:
+        return self._repository.purge_expired(self._now())
+
+    def session_is_active(self, session: AgentSession) -> bool:
+        return session.status is AgentSessionStatus.ACTIVE and session.expires_at > self._now()
+
     def get_history(self, session_id: UUID) -> Sequence[GuidanceStep]:
         return self._repository.list_steps(session_id)
 
@@ -191,28 +202,28 @@ class AgentService:
             completed_at=now,
         )
         step_number = session.current_step + 1
-        self._repository.update_run(updated)
-        self._repository.add_step(
-            GuidanceStep(
-                session_id=session.session_id,
-                run_id=run.run_id,
-                step_number=step_number,
-                decision=decision,
-                created_at=now,
-            )
+        step = GuidanceStep(
+            session_id=session.session_id,
+            run_id=run.run_id,
+            step_number=step_number,
+            decision=decision,
+            created_at=now,
         )
         session_status = (
             AgentSessionStatus.COMPLETED
             if decision.status.value == "completed"
             else AgentSessionStatus.ACTIVE
         )
-        self._repository.update_session(
+        self._repository.complete_run(
+            updated,
+            step,
             replace(
                 session,
+                sandbox_id=None,
                 status=session_status,
                 current_step=step_number,
                 updated_at=now,
-            )
+            ),
         )
         return updated
 

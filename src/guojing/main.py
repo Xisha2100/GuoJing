@@ -6,20 +6,25 @@ from contextlib import asynccontextmanager
 from datetime import timedelta
 
 from deepagents.backends.protocol import SandboxBackendProtocol
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
+from fastapi.responses import Response
 
 from guojing.api.error_handlers import handle_request_validation_error
-from guojing.api.middleware import AgentSecurityMiddleware
+from guojing.api.middleware import AgentSecurityMiddleware, access_response
 from guojing.api.router import api_router
 from guojing.application.agent.coordinator import AgentRunCoordinator
 from guojing.application.agent.ports import SandboxRegistry, VisualGuidanceAgent
 from guojing.application.agent.service import AgentService
-from guojing.core.config import Settings
+from guojing.application.device_access import DeviceAccessService
+from guojing.core.config import AppEnvironment, Settings
 from guojing.domain.agent_guidance import AgentSession, GuidanceDecision, GuidanceStep
+from guojing.domain.device_access import AccessDenied
 from guojing.infrastructure.agents.deep_guidance_agent import DeepGuidanceAgent
 from guojing.infrastructure.persistence.agent_repository import SqlAlchemyAgentRepository
 from guojing.infrastructure.persistence.database import Database
+from guojing.infrastructure.persistence.device_repository import SqlAlchemyDeviceRepository
+from guojing.infrastructure.runtime import ProcessLease, database_ready
 from guojing.infrastructure.sandbox.docker_backend import (
     DockerSandboxFactory,
     DockerSandboxRegistry,
@@ -52,9 +57,16 @@ def create_app(
 ) -> FastAPI:
     """Build an isolated application instance for production or tests."""
     app_settings = settings or Settings()
-    database: Database | None = None
+    database = Database(app_settings.database_url)
+    lease = ProcessLease(app_settings.database_url)
+    access = DeviceAccessService(
+        SqlAlchemyDeviceRepository(database),
+        maximum_devices=app_settings.device_maximum,
+        device_limit=app_settings.device_daily_limit,
+        global_limit=app_settings.global_daily_limit,
+    )
+    deployed = app_settings.environment in {AppEnvironment.PRODUCTION, AppEnvironment.STAGING}
     if agent_service is None:
-        database = Database(app_settings.database_url)
         agent_service = AgentService(
             SqlAlchemyAgentRepository(database),
             session_ttl=timedelta(hours=app_settings.agent_session_ttl_hours),
@@ -75,8 +87,10 @@ def create_app(
             DockerSandboxFactory(
                 docker_host=app_settings.sandbox_docker_host,
                 image=app_settings.sandbox_image,
+                deployment_id=app_settings.deployment_id,
             ),
             idle_ttl_seconds=app_settings.sandbox_idle_ttl_seconds,
+            maximum_containers=app_settings.agent_max_concurrency,
         )
     if agent_coordinator is None:
         agent_coordinator = AgentRunCoordinator(
@@ -86,44 +100,82 @@ def create_app(
             maximum_concurrency=app_settings.agent_max_concurrency,
             queue_capacity=app_settings.agent_queue_capacity,
             run_timeout_seconds=app_settings.agent_run_timeout_seconds,
+            queue_timeout_seconds=app_settings.agent_queue_timeout_seconds,
+            cleanup_timeout_seconds=app_settings.sandbox_cleanup_timeout_seconds,
+            access=access,
         )
+
+    agent_coordinator.bind_access(access)
+
+    async def dependencies_ready() -> bool:
+        try:
+            if not agent_coordinator.ready:
+                return False
+            if not database_ready(
+                database,
+                lease.directory,
+                app_settings.minimum_free_disk_bytes,
+                check_schema=app_settings.environment is not AppEnvironment.TEST,
+            ):
+                return False
+            if isinstance(sandbox_registry, DockerSandboxRegistry):
+                if app_settings.deepseek_api_key is None:
+                    return False
+                return await asyncio.wait_for(sandbox_registry.check_ready(deployed), timeout=5)
+            return True
+        except Exception:
+            return False
+
+    async def is_ready() -> bool:
+        return await dependencies_ready() and access.accepting()
 
     @asynccontextmanager
     async def lifespan(_application: FastAPI) -> AsyncIterator[None]:
-        if isinstance(sandbox_registry, DockerSandboxRegistry):
-            await sandbox_registry.start()
-        await agent_coordinator.start()
-        reaper = asyncio.create_task(_reap_sandboxes(sandbox_registry))
+        lease.acquire()
         try:
-            yield
+            if isinstance(sandbox_registry, DockerSandboxRegistry):
+                try:
+                    await sandbox_registry.start()
+                except Exception:
+                    if deployed:
+                        raise RuntimeError("Docker startup validation failed") from None
+            await agent_coordinator.start()
+            try:
+                if deployed and not await dependencies_ready():
+                    raise RuntimeError("production dependencies are not ready")
+                yield
+            finally:
+                await agent_coordinator.stop()
         finally:
-            reaper.cancel()
-            await asyncio.gather(reaper, return_exceptions=True)
-            await agent_coordinator.stop()
-            if database is not None:
-                database.dispose()
+            database.dispose()
+            lease.release()
+
+    async def handle_access_error(_request: Request, error: Exception) -> Response:
+        assert isinstance(error, AccessDenied)
+        return access_response(error)
 
     application = FastAPI(
         title=app_settings.app_name,
         debug=app_settings.debug,
         lifespan=lifespan,
+        docs_url=None if deployed else "/docs",
+        redoc_url=None if deployed else "/redoc",
+        openapi_url=None if deployed else "/openapi.json",
     )
     application.add_middleware(AgentSecurityMiddleware)
+    application.add_exception_handler(AccessDenied, handle_access_error)
     application.add_exception_handler(
         RequestValidationError,
         handle_request_validation_error,
     )
+    application.state.device_access = access
+    application.state.is_ready = is_ready
+    application.state.dependencies_ready = dependencies_ready
     application.state.settings = app_settings
     application.state.agent_service = agent_service
     application.state.agent_coordinator = agent_coordinator
     application.include_router(api_router)
     return application
-
-
-async def _reap_sandboxes(registry: SandboxRegistry) -> None:
-    while True:
-        await asyncio.sleep(60)
-        await registry.cleanup_idle()
 
 
 app = create_app()

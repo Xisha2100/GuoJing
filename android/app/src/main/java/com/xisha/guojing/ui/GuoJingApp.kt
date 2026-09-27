@@ -17,7 +17,7 @@ import com.xisha.guojing.session.ClientPhase
 fun GuoJingApp(controller: AgentSessionController, onOpenAccessibilitySettings: () -> Unit) {
     val model: AgentViewModel = viewModel(factory = AgentViewModel.factory(controller))
     val state by model.uiState.collectAsStateWithLifecycle()
-    GuoJingScreen(state, model::setEntryEnabled, model::endSession, onOpenAccessibilitySettings)
+    GuoJingScreen(state, model::setEntryEnabled, model::endSession, onOpenAccessibilitySettings, model::saveInvitation)
 }
 
 @Composable
@@ -26,6 +26,7 @@ fun GuoJingScreen(
     onEntryChanged: (Boolean) -> Unit,
     onEnd: () -> Unit,
     onOpenAccessibilitySettings: () -> Unit,
+    onSaveInvitation: (String) -> Unit = {},
 ) {
     Scaffold { padding ->
         Column(
@@ -44,6 +45,22 @@ fun GuoJingScreen(
                         Text("显示悬浮入口", Modifier.weight(1f))
                         Switch(state.entryEnabled, onCheckedChange = onEntryChanged)
                     }
+                }
+            }
+            Card(Modifier.fillMaxWidth()) {
+                var invitation by remember { mutableStateOf("") }
+                Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(state.deviceStatus)
+                    OutlinedTextField(
+                        value = invitation, onValueChange = { if (it.length <= 128) invitation = it },
+                        label = { Text("邀请码") }, singleLine = true,
+                        visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Button(onClick = { onSaveInvitation(invitation); invitation = "" }, enabled = invitation.isNotBlank()) {
+                        Text("保存邀请码")
+                    }
+                    Text("保存后不会联网。首次确认目标时激活本机；卸载重装需要重新邀请。")
                 }
             }
             Text("1. 打开你想操作的应用。\n2. 点击屏幕边缘的“帮我”按钮。\n3. 输入目标，点击“开始指引”。")

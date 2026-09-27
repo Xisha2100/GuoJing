@@ -5,6 +5,7 @@ import java.util.UUID
 data class TargetApp(
     val packageName: String,
     val label: String,
+    val windowId: Int? = null,
 )
 
 data class NormalizedTarget(

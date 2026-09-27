@@ -87,6 +87,7 @@ class AgentSession:
     created_at: datetime
     updated_at: datetime
     expires_at: datetime
+    device_id: UUID | None = None
 
 
 @dataclass(frozen=True, slots=True)

@@ -1,10 +1,8 @@
 """Rootless-friendly Docker implementation of the Deep Agents sandbox protocol."""
 
 import asyncio
-import io
 import shlex
 import socket
-import tarfile
 import time
 from dataclasses import dataclass
 from pathlib import PurePosixPath
@@ -125,14 +123,7 @@ class DockerSandboxBackend(BaseSandbox):
         for raw_path in paths:
             try:
                 path = _safe_path(raw_path)
-                stream, _stat = self._container.get_archive(str(path))
-                archive_bytes = b"".join(stream)
-                with tarfile.open(fileobj=io.BytesIO(archive_bytes), mode="r") as tar:
-                    member = tar.next()
-                    extracted = tar.extractfile(member) if member is not None else None
-                    if extracted is None:
-                        raise FileNotFoundError
-                    content = extracted.read()
+                content = self._read_file(path)
                 responses.append(FileDownloadResponse(path=str(path), content=content, error=None))
             except ValueError:
                 responses.append(
@@ -144,19 +135,42 @@ class DockerSandboxBackend(BaseSandbox):
                 )
         return responses
 
+    def _read_file(self, path: PurePosixPath) -> bytes:
+        # Docker's archive endpoint is unreliable for files inside a read-only
+        # root filesystem's tmpfs; exec reads the exact path without a host mount.
+        created = self._client.api.exec_create(
+            self._container.id,
+            ["sh", "-lc", f"cat {shlex.quote(str(path))}"],
+            stdout=True,
+            stderr=False,
+        )
+        output = bytearray()
+        for chunk in self._client.api.exec_start(created["Id"], stream=True, demux=False):
+            if not isinstance(chunk, bytes):
+                continue
+            if len(output) + len(chunk) > 16 * 1024 * 1024:
+                raise RuntimeError("sandbox file too large")
+            output.extend(chunk)
+        if self._client.api.exec_inspect(created["Id"]).get("ExitCode") != 0:
+            raise FileNotFoundError
+        return bytes(output)
+
     def destroy(self) -> None:
         try:
             self._container.remove(force=True)
-        except Exception:
+        except docker.errors.NotFound:
             pass
 
 
 class DockerSandboxFactory:
     """Create resource-bounded containers without host mounts or credentials."""
 
-    def __init__(self, *, docker_host: str | None, image: str) -> None:
+    def __init__(
+        self, *, docker_host: str | None, image: str, deployment_id: str = "local"
+    ) -> None:
         self._docker_host = docker_host
         self._image = image
+        self._deployment_id = deployment_id
         self._client: Any | None = None
         self._lock = Lock()
 
@@ -167,7 +181,7 @@ class DockerSandboxFactory:
             ["sh", "-lc", "while :; do sleep 3600; done"],
             detach=True,
             auto_remove=False,
-            network_disabled=True,
+            network_mode="none",
             read_only=True,
             tmpfs={
                 "/workspace": "rw,nosuid,nodev,noexec,mode=1777,size=64m",
@@ -180,9 +194,11 @@ class DockerSandboxFactory:
             cap_drop=["ALL"],
             security_opt=["no-new-privileges:true"],
             environment={},
+            log_config={"type": "none"},
             working_dir="/workspace",
             labels={
                 "com.xisha.guojing.agent-sandbox": "true",
+                "com.xisha.guojing.deployment": self._deployment_id,
                 "com.xisha.guojing.session-id": str(session_id),
             },
         )
@@ -192,13 +208,35 @@ class DockerSandboxFactory:
         client = self._get_client()
         containers = client.containers.list(
             all=True,
-            filters={"label": "com.xisha.guojing.agent-sandbox=true"},
+            filters={
+                "label": [
+                    "com.xisha.guojing.agent-sandbox=true",
+                    f"com.xisha.guojing.deployment={self._deployment_id}",
+                ]
+            },
         )
         for container in containers:
             try:
                 container.remove(force=True)
-            except Exception:
+            except docker.errors.NotFound:
                 continue
+
+    def check_ready(self, require_rootless: bool = False) -> bool:
+        client = self._get_client()
+        client.ping()
+        client.images.get(self._image)
+        if require_rootless:
+            info = client.info()
+            return (
+                info.get("CgroupVersion") == "2"
+                and info.get("CgroupDriver") == "systemd"
+                and "name=rootless" in info.get("SecurityOptions", [])
+                and all(
+                    info.get(name)
+                    for name in ("MemoryLimit", "PidsLimit", "CpuCfsQuota", "CpuCfsPeriod")
+                )
+            )
+        return True
 
     def close(self) -> None:
         if self._client is not None:
@@ -208,9 +246,9 @@ class DockerSandboxFactory:
         with self._lock:
             if self._client is None:
                 self._client = (
-                    docker.DockerClient(base_url=self._docker_host)
+                    docker.DockerClient(base_url=self._docker_host, timeout=5)
                     if self._docker_host
-                    else docker.from_env()
+                    else docker.from_env(timeout=5)
                 )
             return self._client
 
@@ -222,36 +260,90 @@ class _SandboxEntry:
 
 
 class DockerSandboxRegistry:
-    """Keep at most one isolated container per guidance session."""
+    """Bound both active and late-created containers; retain failures for recovery."""
 
-    def __init__(self, factory: DockerSandboxFactory, *, idle_ttl_seconds: int = 600) -> None:
+    def __init__(
+        self,
+        factory: DockerSandboxFactory,
+        *,
+        idle_ttl_seconds: int = 600,
+        maximum_containers: int = 2,
+    ) -> None:
         self._factory = factory
         self._idle_ttl_seconds = idle_ttl_seconds
+        self._maximum_containers = maximum_containers
         self._entries: dict[UUID, _SandboxEntry] = {}
+        self._creating: dict[UUID, asyncio.Task[DockerSandboxBackend]] = {}
+        self._background: set[asyncio.Task[None]] = set()
         self._lock = asyncio.Lock()
+        self.healthy = True
 
     async def start(self) -> None:
         try:
             await asyncio.to_thread(self._factory.cleanup_orphans)
         except Exception:
-            pass
+            self.healthy = False
+            raise
+
+    async def check_ready(self, require_rootless: bool = False) -> bool:
+        return self.healthy and await asyncio.to_thread(self._factory.check_ready, require_rootless)
 
     async def acquire(self, session_id: UUID) -> DockerSandboxBackend:
         async with self._lock:
+            if not self.healthy:
+                raise RuntimeError("sandbox cleanup requires recovery")
             entry = self._entries.get(session_id)
-            if entry is None:
-                backend = await asyncio.to_thread(self._factory.create, session_id)
-                entry = _SandboxEntry(backend=backend, touched_at=time.monotonic())
-                self._entries[session_id] = entry
-            else:
+            if entry:
                 entry.touched_at = time.monotonic()
-            return entry.backend
+                return entry.backend
+            task = self._creating.get(session_id)
+            if task is None:
+                if len(self._entries) + len(self._creating) >= self._maximum_containers:
+                    raise RuntimeError("sandbox capacity reached")
+                task = asyncio.create_task(asyncio.to_thread(self._factory.create, session_id))
+                self._creating[session_id] = task
+        try:
+            backend = await asyncio.shield(task)
+        except asyncio.CancelledError:
+            cleanup = asyncio.create_task(self.destroy(session_id))
+            self._background.add(cleanup)
+            cleanup.add_done_callback(self._background_done)
+            raise
+        except Exception:
+            self.healthy = False
+            async with self._lock:
+                self._creating.pop(session_id, None)
+            raise
+        async with self._lock:
+            self._creating.pop(session_id, None)
+            self._entries[session_id] = _SandboxEntry(backend, time.monotonic())
+        return backend
 
     async def destroy(self, session_id: UUID) -> None:
         async with self._lock:
-            entry = self._entries.pop(session_id, None)
-        if entry is not None:
-            await asyncio.to_thread(entry.backend.destroy)
+            creation = self._creating.get(session_id)
+            entry = self._entries.get(session_id)
+            if creation is not None:
+                try:
+                    backend = await asyncio.shield(creation)
+                except Exception:
+                    self._creating.pop(session_id, None)
+                    return
+                entry = _SandboxEntry(backend, time.monotonic())
+                self._entries[session_id] = entry
+                self._creating.pop(session_id, None)
+            if entry is not None:
+                try:
+                    await asyncio.to_thread(entry.backend.destroy)
+                except BaseException:
+                    self.healthy = False
+                    raise
+                self._entries.pop(session_id, None)
+
+    def _background_done(self, task: asyncio.Task[None]) -> None:
+        self._background.discard(task)
+        if task.cancelled() or task.exception() is not None:
+            self.healthy = False
 
     async def cleanup_idle(self) -> None:
         cutoff = time.monotonic() - self._idle_ttl_seconds
@@ -261,13 +353,10 @@ class DockerSandboxRegistry:
             await self.destroy(session_id)
 
     async def close(self) -> None:
-        async with self._lock:
-            entries = list(self._entries.values())
-            self._entries.clear()
-        await asyncio.gather(
-            *(asyncio.to_thread(entry.backend.destroy) for entry in entries),
-            return_exceptions=True,
-        )
+        for session_id in set(self._entries) | set(self._creating):
+            await self.destroy(session_id)
+        if self._background:
+            await asyncio.gather(*self._background, return_exceptions=True)
         await asyncio.to_thread(self._factory.close)
 
 

@@ -1,0 +1,19 @@
+[Unit]
+Description=Delete authorization backups older than 24 hours
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=guojing
+Group=guojing
+WorkingDirectory=/opt/guojing/current
+EnvironmentFile=/etc/guojing/production.env
+ExecStart=/opt/guojing/current/.venv/bin/guojing-admin prune-backups
+TimeoutStartSec=180
+UMask=0077
+LimitCORE=0
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/guojing/data

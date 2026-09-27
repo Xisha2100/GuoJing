@@ -40,7 +40,7 @@ def test_factory_applies_isolation_and_resource_limits() -> None:
 
     options = client.containers.arguments
     assert backend.id == "sandbox-container"
-    assert options["network_disabled"] is True
+    assert options["network_mode"] == "none"
     assert options["read_only"] is True
     assert options["nano_cpus"] == 500_000_000
     assert options["mem_limit"] == "512m"
@@ -216,3 +216,37 @@ async def test_registry_isolates_sessions_and_reaps_idle_containers(
     assert all(backend.destroyed for backend in factory.created)
     await registry.close()
     assert factory.closed is True
+
+
+@pytest.mark.asyncio
+async def test_cancelled_creation_destroys_late_container_and_releases_capacity() -> None:
+    import asyncio
+    from threading import Event
+
+    started, release = Event(), Event()
+
+    class LateFactory(RegistryFactory):
+        def create(self, session_id: object) -> RegistryBackend:
+            started.set()
+            assert release.wait(2)
+            return super().create(session_id)
+
+    factory = LateFactory()
+    registry = DockerSandboxRegistry(cast(DockerSandboxFactory, factory), maximum_containers=1)
+    task = asyncio.create_task(registry.acquire(uuid4()))
+    await asyncio.to_thread(started.wait, 1)
+    with pytest.raises(RuntimeError, match="capacity"):
+        await registry.acquire(uuid4())
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    release.set()
+    await asyncio.wait_for(registry.close(), 2)
+    assert factory.created[0].destroyed
+    assert not registry._creating and not registry._entries
+
+
+def test_download_reads_tmpfs_through_bounded_exec_instead_of_docker_archive() -> None:
+    backend = DockerSandboxBackend(FakeExecClient(), FakeContainer())
+    result = backend.download_files(["/workspace/synthetic.txt"])[0]
+    assert result.error is None and result.content == b"1234567890"

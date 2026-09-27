@@ -4,6 +4,7 @@ import android.app.Application
 import com.xisha.guojing.data.HttpAgentRepository
 import com.xisha.guojing.observation.AccessibilityRuntimeBridge
 import com.xisha.guojing.session.AgentSessionController
+import com.xisha.guojing.session.EncryptedDeviceAccessStore
 import com.xisha.guojing.session.EncryptedActiveSessionStore
 import com.xisha.guojing.speech.AndroidSpeechPort
 import kotlinx.coroutines.CoroutineScope
@@ -24,13 +25,15 @@ class GuoJingApplication : Application() {
             "Release API_BASE_URL must use HTTPS"
         }
         speech = AndroidSpeechPort(this)
+        val deviceStore = EncryptedDeviceAccessStore(this)
         agentSessionController = AgentSessionController(
-            repository = HttpAgentRepository(BuildConfig.API_BASE_URL),
+            repository = HttpAgentRepository(BuildConfig.API_BASE_URL, deviceStore),
             capture = AccessibilityRuntimeBridge,
             overlay = AccessibilityRuntimeBridge,
             speech = speech,
             store = EncryptedActiveSessionStore(this),
             scope = applicationScope,
+            deviceStore = deviceStore,
         )
         AccessibilityRuntimeBridge.setActions(agentSessionController)
     }

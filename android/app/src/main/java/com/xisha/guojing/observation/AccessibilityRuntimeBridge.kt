@@ -12,6 +12,8 @@ import kotlinx.coroutines.flow.asStateFlow
 interface ScreenCapturePort {
     val connected: StateFlow<Boolean>
 
+    fun isTargetCurrent(app: TargetApp): Boolean
+
     suspend fun capture(targetPackage: String): CapturedScreen
 
     fun isDisplayCurrent(
@@ -25,6 +27,8 @@ interface ScreenCapturePort {
 internal interface AccessibilityHost {
     fun showMessage(message: String)
     fun showSpeechRange(start: Int, end: Int)
+    fun isTargetCurrent(app: TargetApp): Boolean
+
     suspend fun capture(targetPackage: String): CapturedScreen
 
     fun isDisplayCurrent(
@@ -78,6 +82,8 @@ object AccessibilityRuntimeBridge : ScreenCapturePort, GuidanceOverlayPort, Over
     override fun onTargetLeft() {
         actions?.onTargetLeft()
     }
+
+    override fun isTargetCurrent(app: TargetApp) = host?.isTargetCurrent(app) == true
 
     override suspend fun capture(targetPackage: String): CapturedScreen =
         requireNotNull(host) { "Accessibility service is not connected" }

@@ -1,6 +1,15 @@
 package com.xisha.guojing.data
 
 import android.util.Base64
+import com.xisha.guojing.model.DeviceAccess
+import com.xisha.guojing.model.DeviceActivation
+import com.xisha.guojing.session.DeviceAccessStore
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.serialization.json.*
+import okhttp3.Call
+import okhttp3.Callback
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 import android.util.Base64OutputStream
 import com.xisha.guojing.model.AgentRunAccepted
 import com.xisha.guojing.model.AgentRunSnapshot
@@ -8,11 +17,9 @@ import com.xisha.guojing.model.AgentSessionHandle
 import com.xisha.guojing.model.CapturedScreen
 import java.io.IOException
 import java.util.UUID
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
-import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.MediaType.Companion.toMediaType
@@ -27,6 +34,10 @@ import okhttp3.sse.EventSources
 import okio.BufferedSink
 
 interface AgentRepository {
+    suspend fun activate(access: DeviceAccess): DeviceActivation
+
+    suspend fun getTurn(session: AgentSessionHandle, clientTurnId: UUID): AgentRunSnapshot
+
     suspend fun createSession(
         clientSessionId: UUID,
         goal: String,
@@ -51,10 +62,11 @@ interface AgentRepository {
     suspend fun closeSession(sessionId: UUID, accessToken: String)
 }
 
-class AgentHttpException(val statusCode: Int) : IOException("Agent request failed")
+class AgentHttpException(val statusCode: Int, val code: String? = null) : IOException("Agent request failed")
 
 class HttpAgentRepository(
     baseUrl: String,
+    private val deviceStore: DeviceAccessStore,
     client: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(java.time.Duration.ofSeconds(10))
         .readTimeout(java.time.Duration.ofSeconds(100))
@@ -62,12 +74,38 @@ class HttpAgentRepository(
 ) : AgentRepository {
     // Custom session headers must never follow a redirect to another origin.
     private val client = client.newBuilder()
+        .retryOnConnectionFailure(false)
         .followRedirects(false)
         .followSslRedirects(false)
         .callTimeout(java.time.Duration.ofSeconds(100))
         .build()
     private val baseUrl = (baseUrl.trimEnd('/') + "/").toHttpUrl()
     private val eventSourceFactory = EventSources.createFactory(this.client)
+
+    override suspend fun activate(access: DeviceAccess): DeviceActivation {
+        val body = buildJsonObject {
+            put("schema_version", "1.0")
+            put("invitation_code", requireNotNull(access.invitation))
+            put("installation_id", access.installationId.toString())
+            put("device_secret", access.secret)
+        }
+        val request = Request.Builder().url(resolve("api/v1/devices/activate"))
+            .post(body.toString().toRequestBody(JSON_MEDIA_TYPE)).build()
+        val root = Json.parseToJsonElement(executeText(request, authenticated = false)).jsonObject
+        require(root.getValue("schema_version").jsonPrimitive.content == "1.0")
+        require(root.getValue("status").jsonPrimitive.content == "active")
+        return DeviceActivation(
+            UUID.fromString(root.getValue("device_id").jsonPrimitive.content),
+            root.getValue("expires_at").jsonPrimitive.content,
+        )
+    }
+
+    override suspend fun getTurn(session: AgentSessionHandle, clientTurnId: UUID): AgentRunSnapshot {
+        val request = Request.Builder()
+            .url(resolve("api/v1/agent/sessions/${session.sessionId}/turns/$clientTurnId"))
+            .agentToken(session.accessToken).get().build()
+        return AgentProtocol.parseRun(executeText(request))
+    }
 
     override suspend fun createSession(
         clientSessionId: UUID,
@@ -118,7 +156,7 @@ class HttpAgentRepository(
             .header("Accept", "text/event-stream")
             .build()
         val source = eventSourceFactory.newEventSource(
-            request,
+            authorized(request),
             object : EventSourceListener() {
                 override fun onEvent(
                     eventSource: EventSource,
@@ -146,7 +184,7 @@ class HttpAgentRepository(
                     response: Response?,
                 ) {
                     close(
-                        response?.let { AgentHttpException(it.code) }
+                        response?.let { httpError(it) }
                             ?: throwable
                             ?: IOException("Agent event stream failed"),
                     )
@@ -176,23 +214,48 @@ class HttpAgentRepository(
         )
     }
 
-    private suspend fun executeText(request: Request): String = withContext(Dispatchers.IO) {
-        client.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) throw AgentHttpException(response.code)
-            val source = response.body.source()
-            if (source.request(MAX_RESPONSE_CHARS.toLong() + 1)) {
-                throw IOException("Agent response exceeds size limit")
-            }
-            source.readUtf8()
+    private suspend fun authorized(request: Request): Request {
+        val authorization = deviceStore.load()?.authorization
+            ?: throw AgentHttpException(401, "device_not_activated")
+        return request.newBuilder().header("Authorization", authorization).build()
+    }
+
+    private suspend fun executeText(request: Request, authenticated: Boolean = true): String {
+        val call = client.newCall(if (authenticated) authorized(request) else request)
+        // Cancellation closes the socket, including while reading the response body.
+        return suspendCancellableCoroutine { continuation ->
+            continuation.invokeOnCancellation { call.cancel() }
+            call.enqueue(object : Callback {
+                override fun onFailure(call: Call, error: IOException) {
+                    continuation.resumeWithException(error)
+                }
+                override fun onResponse(call: Call, response: Response) {
+                    val result = runCatching {
+                        response.use {
+                            if (!it.isSuccessful) throw httpError(it)
+                            val source = it.body.source()
+                            if (source.request(MAX_RESPONSE_CHARS.toLong() + 1)) {
+                                throw IOException("Agent response exceeds size limit")
+                            }
+                            source.readUtf8()
+                        }
+                    }
+                    result.fold(continuation::resume, continuation::resumeWithException)
+                }
+            })
         }
     }
 
-    private suspend fun executeEmpty(request: Request) {
-        withContext(Dispatchers.IO) {
-            client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) throw AgentHttpException(response.code)
-            }
-        }
+    private suspend fun executeEmpty(request: Request) { executeText(request) }
+
+    private fun httpError(response: Response): AgentHttpException {
+        val code = runCatching {
+            val source = response.body.source()
+            if (source.request(MAX_RESPONSE_CHARS.toLong() + 1)) return@runCatching null
+            Json.parseToJsonElement(source.readUtf8()).jsonObject["detail"]
+                ?.jsonObject?.get("code")?.jsonPrimitive?.content
+        }.getOrNull()
+        return AgentHttpException(response.code, code)
     }
 
     private fun resolve(path: String): HttpUrl {
@@ -218,6 +281,8 @@ private class ScreenshotRunRequestBody(
     private val clientTurnId: UUID,
     private val screenshot: CapturedScreen,
 ) : RequestBody() {
+    override fun isOneShot() = true
+
     override fun contentType() = "application/json; charset=utf-8".toMediaType()
 
     override fun writeTo(sink: BufferedSink) {

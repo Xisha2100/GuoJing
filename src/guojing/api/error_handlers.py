@@ -7,7 +7,7 @@ from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response
 
-from guojing.api.middleware import AGENT_PATH_PREFIX
+from guojing.api.middleware import AGENT_PATH_PREFIX, DEVICE_PATH_PREFIX
 
 
 async def handle_request_validation_error(
@@ -20,7 +20,7 @@ async def handle_request_validation_error(
             status_code=500,
             content={"detail": "internal server error"},
         )
-    if not request.url.path.startswith(AGENT_PATH_PREFIX):
+    if not request.url.path.startswith((AGENT_PATH_PREFIX, DEVICE_PATH_PREFIX)):
         return await request_validation_exception_handler(request, exc)
     issues = [_safe_issue(error) for error in exc.errors()]
     return JSONResponse(

@@ -1,0 +1,8 @@
+[Unit]
+Description=Enforce GuoJing backup retention every minute
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=1min
+Unit=guojing-prune.service
+[Install]
+WantedBy=timers.target

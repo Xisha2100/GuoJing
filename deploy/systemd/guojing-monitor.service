@@ -1,0 +1,18 @@
+[Unit]
+Description=GuoJing service, capacity, analysis and backup alarms
+After=network-online.target
+[Service]
+Type=oneshot
+User=guojing
+Group=guojing
+WorkingDirectory=/opt/guojing/current
+EnvironmentFile=/etc/guojing/production.env
+ExecStart=/opt/guojing/current/.venv/bin/guojing-admin monitor
+TimeoutStartSec=30
+UMask=0077
+LimitCORE=0
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/guojing/data

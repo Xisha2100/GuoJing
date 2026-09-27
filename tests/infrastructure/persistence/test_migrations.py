@@ -25,6 +25,11 @@ def test_migration_replaces_legacy_schema_with_agent_tables(
         "agent_sessions",
         "alembic_version",
         "guidance_steps",
+        "devices",
+        "device_invitations",
+        "daily_usage",
+        "run_reservations",
+        "operations",
     }
     with engine.connect() as connection:
         assert connection.exec_driver_sql("PRAGMA journal_mode").scalar_one() == "wal"

@@ -25,6 +25,7 @@ class AgentSessionRecord(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    device_id: Mapped[str | None] = mapped_column(String(36), index=True, nullable=True)
 
 
 class AgentRunRecord(Base):
@@ -79,3 +80,44 @@ class GuidanceStepRecord(Base):
     target_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     confidence: Mapped[float] = mapped_column(Float, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class DeviceRecord(Base):
+    __tablename__ = "devices"
+    device_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    installation_id: Mapped[str] = mapped_column(String(36), unique=True)
+    secret_digest: Mapped[str] = mapped_column(String(64))
+    label: Mapped[str] = mapped_column(String(120))
+    revoked: Mapped[bool] = mapped_column(default=False)
+    daily_limit: Mapped[int | None] = mapped_column(nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class InvitationRecord(Base):
+    __tablename__ = "device_invitations"
+    digest: Mapped[str] = mapped_column(String(64), primary_key=True)
+    label: Mapped[str] = mapped_column(String(120))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    device_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+
+
+class DailyUsageRecord(Base):
+    __tablename__ = "daily_usage"
+    day: Mapped[str] = mapped_column(String(10), primary_key=True)
+    scope: Mapped[str] = mapped_column(String(36), primary_key=True)
+    count: Mapped[int] = mapped_column(default=0)
+
+
+class RunReservationRecord(Base):
+    __tablename__ = "run_reservations"
+    run_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    device_id: Mapped[str] = mapped_column(String(36), index=True)
+    day: Mapped[str] = mapped_column(String(10))
+    status: Mapped[str] = mapped_column(String(16))
+
+
+class OperationsRecord(Base):
+    __tablename__ = "operations"
+    key: Mapped[str] = mapped_column(String(40), primary_key=True)
+    value: Mapped[str] = mapped_column(String(120))

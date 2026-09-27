@@ -5,6 +5,8 @@ description = "Backend API for 老牌子, an in-context smartphone guidance assi
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "alembic>=1.18.5,<2.0.0",
+    "alibabacloud-credentials>=1,<2",
+    "alibabacloud-oss-v2>=1.2,<2",
     "deepagents>=0.7.10,<0.8",
     "docker>=7.1,<8",
     "fastapi>=0.139.2,<0.140.0",
@@ -19,6 +21,9 @@ dependencies = [
     "sqlalchemy>=2.0.51,<2.1.0",
     "uvicorn[standard]>=0.51.0,<0.52.0",
 ]
+
+[project.scripts]
+guojing-admin = "guojing.operations.cli:main"
 
 [build-system]
 requires = ["hatchling>=1.31.0,<2.0.0"]

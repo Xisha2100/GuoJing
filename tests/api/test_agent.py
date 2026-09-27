@@ -11,6 +11,7 @@ import pytest
 from deepagents.backends.protocol import SandboxBackendProtocol
 from fastapi.testclient import TestClient
 from PIL import Image
+from tests.device_helpers import authorize_client
 
 from guojing.application.agent.coordinator import AgentRunCoordinator
 from guojing.application.agent.service import AgentService
@@ -144,6 +145,7 @@ def agent_client(tmp_path: Path) -> Iterator[TestClient]:
             agent_coordinator=coordinator,
         )
     ) as client:
+        authorize_client(client)
         yield client
     database.dispose()
 
@@ -313,6 +315,7 @@ def test_three_turn_session_rebuilds_text_history_and_completes(tmp_path: Path) 
                 agent_coordinator=coordinator,
             )
         ) as client:
+            authorize_client(client)
             session = client.post(
                 "/api/v1/agent/sessions",
                 json={
@@ -388,6 +391,7 @@ def test_run_can_be_cancelled_without_exposing_agent_state(tmp_path: Path) -> No
                 agent_coordinator=coordinator,
             )
         ) as client:
+            authorize_client(client)
             session = client.post(
                 "/api/v1/agent/sessions",
                 json={
@@ -451,9 +455,9 @@ def test_run_can_be_cancelled_without_exposing_agent_state(tmp_path: Path) -> No
         database.dispose()
 
     assert cancelled.status_code == 204
-    assert queued.status_code == 202
-    assert overflow.status_code == 429
-    assert overflow.json() == {"detail": "agent run queue is full"}
+    assert queued.status_code == 409
+    assert overflow.status_code == 409
+    assert overflow.json()["detail"]["code"] == "device_run_in_progress"
     assert result["status"] == "cancelled"
     assert result["result"] is None
     assert closed.status_code == 204

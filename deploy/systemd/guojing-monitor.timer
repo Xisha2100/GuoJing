@@ -1,0 +1,8 @@
+[Unit]
+Description=Check GuoJing health every minute
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=1min
+Unit=guojing-monitor.service
+[Install]
+WantedBy=timers.target

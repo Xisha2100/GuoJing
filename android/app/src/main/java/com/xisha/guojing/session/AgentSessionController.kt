@@ -54,6 +54,7 @@ data class AgentClientUiState(
     val instruction: String? = null,
     val confidence: Double? = null,
     val message: String? = null,
+    val deviceStatus: String = "未开通，请保存邀请码",
 )
 
 class AgentSessionController(
@@ -62,6 +63,7 @@ class AgentSessionController(
     private val overlay: GuidanceOverlayPort,
     private val speech: SpeechPort,
     private val store: ActiveSessionStore,
+    private val deviceStore: DeviceAccessStore,
     private val scope: CoroutineScope,
     private val nowEpochSeconds: () -> Long = { Instant.now().epochSecond },
 ) : OverlayActions {
@@ -81,6 +83,33 @@ class AgentSessionController(
             }
         }
         scope.launch { initialize() }
+    }
+
+    fun saveInvitation(value: String) {
+        if (runJob?.isActive == true || active != null) {
+            mutableUiState.update { it.copy(message = "请先结束当前指引") }
+            return
+        }
+        scope.launch {
+            try {
+                // Saving an invitation is a local operation; activation needs goal confirmation.
+                val existing = deviceStore.load()
+                val invited = if (existing?.invitation == value.trim()) existing
+                    else invitedInstallation(value.trim())
+                deviceStore.save(invited)
+                mutableUiState.update { it.copy(deviceStatus = "邀请码已保存，开始指引时激活", message = null) }
+            } catch (_: Exception) {
+                mutableUiState.update { it.copy(message = "邀请码保存失败，请检查格式后重试") }
+            }
+        }
+    }
+
+    private suspend fun ensureActivated() {
+        val access = deviceStore.load() ?: throw AgentHttpException(401, "device_not_activated")
+        if (access.deviceId != null) return
+        val activation = repository.activate(access)
+        deviceStore.save(access.copy(deviceId = activation.deviceId, expiresAt = activation.expiresAt, invitation = null))
+        mutableUiState.update { it.copy(deviceStatus = "设备已开通") }
     }
 
     fun setEntryEnabled(enabled: Boolean) {
@@ -118,7 +147,7 @@ class AgentSessionController(
                     targetLabel = app.label, goal = goal.trim(),
                 )
             }
-            createSession()
+            createSession(app)
             if (mutableUiState.value.phase == ClientPhase.ReadyToCapture) captureAndRun()
         }
     }
@@ -174,6 +203,7 @@ class AgentSessionController(
             AgentClientUiState(
                 entryEnabled = entryEnabled,
                 accessibilityConnected = it.accessibilityConnected,
+                deviceStatus = it.deviceStatus,
             )
         }
         runJob = scope.launch {
@@ -188,6 +218,12 @@ class AgentSessionController(
     }
 
     private suspend fun initialize() {
+        val device = deviceStore.load()
+        mutableUiState.update { it.copy(deviceStatus = when {
+            device?.deviceId != null -> "设备已开通"
+            device != null -> "邀请码已保存，开始指引时激活"
+            else -> "未开通，请保存邀请码"
+        }) }
         val restored = store.load() ?: return
         if (nowEpochSeconds() - restored.createdAtEpochSeconds >= SESSION_TTL_SECONDS) {
             store.clear()
@@ -195,15 +231,29 @@ class AgentSessionController(
         }
         active = restored
         showRestored(restored)
-        restored.currentRunId?.let { runId ->
-            runJob = scope.launch { resumeRun(restored, runId) }
+        if (restored.currentRunId != null) {
+            runJob = scope.launch { resumeRun(restored, restored.currentRunId) }
+        } else if (restored.pendingTurnId != null) {
+            runJob = scope.launch {
+                try {
+                    val found = repository.getTurn(AgentSessionHandle(restored.sessionId, restored.accessToken), restored.pendingTurnId)
+                    val updated = restored.copy(currentRunId = found.runId)
+                    active = updated
+                    store.save(updated)
+                    resumeRun(updated, found.runId)
+                } catch (error: CancellationException) { throw error }
+                catch (error: Exception) { showRetry(userMessage(error, "原任务暂时无法确认，请检查网络后重试")) }
+            }
         }
     }
 
-    private suspend fun createSession() {
+    private suspend fun createSession(app: TargetApp) {
         val state = mutableUiState.value
-        val app = TargetApp(state.selectedPackage ?: return, state.targetLabel ?: return)
         try {
+            ensureActivated()
+            if (!capture.isTargetCurrent(app)) {
+                throw IllegalStateException("目标应用已变化，请返回后重新开始")
+            }
             val handle = repository.createSession(
                 clientSessionId = UUID.randomUUID(),
                 goal = state.goal.trim(),
@@ -254,9 +304,22 @@ class AgentSessionController(
 
     private suspend fun captureAndRun() {
         var session = active ?: return
+        // A lost upload response must be resolved before an explicit new screenshot.
+        if (session.currentRunId == null && session.pendingTurnId != null) {
+            try {
+                val found = repository.getTurn(AgentSessionHandle(session.sessionId, session.accessToken), requireNotNull(session.pendingTurnId))
+                session = session.copy(currentRunId = found.runId)
+            } catch (error: CancellationException) { throw error }
+            catch (error: Exception) {
+                if (error !is AgentHttpException || error.statusCode != 404) {
+                    showRetry(userMessage(error, "原任务暂时无法确认，请检查网络后重试"))
+                    return
+                }
+            }
+        }
         session.currentRunId?.let { previousRunId ->
             runCatching { repository.cancelRun(previousRunId, session.accessToken) }
-            session = session.copy(currentRunId = null, eventsEndpoint = null)
+            session = session.copy(currentRunId = null, eventsEndpoint = null, pendingTurnId = null)
             active = session
             store.save(session)
         }
@@ -272,19 +335,30 @@ class AgentSessionController(
             return
         }
         try {
-            val accepted = repository.createRun(
-                session = AgentSessionHandle(session.sessionId, session.accessToken),
-                clientTurnId = UUID.randomUUID(),
-                screenshot = screenshot,
-            )
-            screenshot.erase()
+            val turnId = UUID.randomUUID()
             session = session.copy(
-                currentRunId = accepted.runId,
-                eventsEndpoint = accepted.eventsEndpoint,
+                pendingTurnId = turnId,
                 displayWidth = screenshot.displayWidth,
                 displayHeight = screenshot.displayHeight,
                 rotation = screenshot.rotation,
             )
+            active = session
+            store.save(session) // Durable before upload; no screenshot is stored.
+            val accepted = try {
+                repository.createRun(
+                    session = AgentSessionHandle(session.sessionId, session.accessToken),
+                    clientTurnId = turnId,
+                    screenshot = screenshot,
+                )
+            } catch (error: CancellationException) { throw error }
+            catch (error: Exception) {
+                screenshot.erase()
+                if (error is AgentHttpException) throw error
+                val found = repository.getTurn(AgentSessionHandle(session.sessionId, session.accessToken), turnId)
+                com.xisha.guojing.model.AgentRunAccepted(found.runId, found.status, "/api/v1/agent/runs/${found.runId}/events")
+            }
+            screenshot.erase()
+            session = session.copy(currentRunId = accepted.runId, eventsEndpoint = accepted.eventsEndpoint)
             active = session
             store.save(session)
             mutableUiState.update { it.copy(phase = ClientPhase.WaitingForAgent) }
@@ -305,32 +379,34 @@ class AgentSessionController(
         session: StoredAgentSession,
         runId: UUID,
         eventsEndpoint: String,
-    ): AgentRunSnapshot = try {
-        withTimeout(RUN_WAIT_TIMEOUT_MILLIS) {
-            repository.observeRun(eventsEndpoint, session.accessToken)
-                .first { it.status.isTerminal }
+    ): AgentRunSnapshot = withTimeout(RUN_WAIT_TIMEOUT_MILLIS) {
+        try {
+            withTimeout(100_000L) {
+                repository.observeRun(eventsEndpoint, session.accessToken)
+                    .first { it.status.isTerminal }
+            }
+        } catch (_: TimeoutCancellationException) {
+            currentCoroutineContext().ensureActive()
+            pollTerminal(session, runId)
+        } catch (error: CancellationException) { throw error }
+        catch (error: Exception) {
+            if (error is AgentHttpException && error.statusCode in setOf(401, 403, 404)) throw error
+            pollTerminal(session, runId)
         }
-    } catch (_: TimeoutCancellationException) {
-        pollTerminal(session, runId)
-    } catch (error: CancellationException) {
-        throw error
-    } catch (_: Exception) {
-        pollTerminal(session, runId)
     }
 
-    private suspend fun pollTerminal(
-        session: StoredAgentSession,
-        runId: UUID,
-    ): AgentRunSnapshot {
+    private suspend fun pollTerminal(session: StoredAgentSession, runId: UUID): AgentRunSnapshot {
         var delayMillis = 1_000L
-        return withTimeout(RUN_WAIT_TIMEOUT_MILLIS) {
-            while (true) {
+        while (true) {
+            try {
                 val snapshot = repository.getRun(runId, session.accessToken)
-                if (snapshot.status.isTerminal) return@withTimeout snapshot
-                delay(delayMillis)
-                delayMillis = (delayMillis * 2).coerceAtMost(15_000L)
+                if (snapshot.status.isTerminal) return snapshot
+            } catch (error: CancellationException) { throw error }
+            catch (error: Exception) {
+                if (error is AgentHttpException && error.statusCode in setOf(401, 403, 404)) throw error
             }
-            error("unreachable")
+            delay(delayMillis)
+            delayMillis = (delayMillis * 2).coerceAtMost(15_000L)
         }
     }
 
@@ -418,6 +494,7 @@ class AgentSessionController(
             stepNumber = session.stepNumber + 1,
             currentRunId = null,
             eventsEndpoint = null,
+            pendingTurnId = null,
             lastDecision = decision,
         )
         active = next
@@ -432,6 +509,7 @@ class AgentSessionController(
         val next = session.copy(
             currentRunId = null,
             eventsEndpoint = null,
+            pendingTurnId = null,
             lastDecision = decision,
         )
         active = next
@@ -457,6 +535,7 @@ class AgentSessionController(
                 val updated = session.copy(
                     currentRunId = null,
                     eventsEndpoint = null,
+                    pendingTurnId = null,
                     lastDecision = terminal.result,
                     stepNumber = session.stepNumber + 1,
                 )
@@ -475,16 +554,17 @@ class AgentSessionController(
             if (error is AgentHttpException && error.statusCode == 404) {
                 store.clear()
                 active = null
-                overlay.hide()
+                if (entryEnabled) overlay.present(OverlayPresentation.Entry) else overlay.hide()
                 mutableUiState.update {
                     AgentClientUiState(
                         entryEnabled = entryEnabled,
                         accessibilityConnected = it.accessibilityConnected,
+                        deviceStatus = it.deviceStatus,
                         message = "原会话已失效，请重新开始",
                     )
                 }
             } else {
-                showRetry("恢复会话失败，请检查网络后重试")
+                showRetry(userMessage(error, "恢复会话失败，请检查网络后重试"))
             }
         }
     }
@@ -540,22 +620,48 @@ class AgentSessionController(
         }
     }
 
-    private fun userMessage(error: Exception, fallback: String): String = when (error) {
-        is AgentProtocolException -> "服务器响应格式不兼容，请更新应用"
-        is AgentHttpException -> when (error.statusCode) {
-            404 -> "会话已失效，请重新开始"
-            409 -> "当前会话状态已变化，请重新开始"
-            422 -> "截图格式校验失败，请重新截图"
-            429 -> "当前使用人数较多，请稍后重试"
+    private fun userMessage(error: Exception, fallback: String): String {
+        if (error is AgentHttpException) {
+            val message = when (error.code) {
+                "device_not_activated", "invalid_device_credentials" -> "未开通，请在设置页保存邀请码"
+                "device_revoked" -> "设备已停用，请联系邀请人"
+                "device_expired" -> "设备授权已到期，请联系邀请人"
+                "device_daily_quota_exhausted" -> "设备今日额度已用完，北京时间零点重置"
+                "global_daily_quota_exhausted" -> "全站今日额度已用完，北京时间零点重置"
+                "service_busy", "queue_full", "service_paused", "service_unavailable" -> "服务繁忙，请稍后重试"
+                "invalid_invitation", "invitation_expired", "invitation_already_used" -> "邀请码无效、已使用或已过期，请联系邀请人"
+                "device_capacity_reached" -> "试点设备名额已满，请联系邀请人"
+                "device_run_in_progress" -> "原任务仍在处理，请稍后重试"
+                else -> null
+            }
+            if (message != null) {
+                mutableUiState.update { it.copy(deviceStatus = message) }
+                return message
+            }
+            return when (error.statusCode) {
+                401, 403 -> "设备未获授权，请联系邀请人"
+                404 -> "原会话或任务不存在，请重新开始"
+                409 -> "当前任务状态已变化，请稍后重试"
+                422 -> "请求校验失败，请更新应用或重新截图"
+                429, 503 -> "服务繁忙，请稍后重试"
+                else -> fallback
+            }
+        }
+        return when (error) {
+            is AgentProtocolException -> "服务器响应格式不兼容，请更新应用"
+            is IllegalStateException -> "目标应用已变化或本地保存失败，请返回目标应用后重试"
             else -> fallback
         }
-
-        else -> fallback
     }
 
     private fun runFailureMessage(snapshot: AgentRunSnapshot): String = when {
         snapshot.status == AgentRunStatus.Cancelled -> "本次识别已取消，可以重新识别"
-        snapshot.errorCode == "queue_full" -> "当前使用人数较多，请稍后重试"
+        snapshot.errorCode == "device_revoked" -> "设备已停用，请联系邀请人"
+        snapshot.errorCode == "device_expired" -> "设备授权已到期，请联系邀请人"
+        snapshot.errorCode == "device_daily_quota_exhausted" -> "设备今日额度已用完，北京时间零点重置"
+        snapshot.errorCode == "global_daily_quota_exhausted" -> "全站今日额度已用完，北京时间零点重置"
+        snapshot.errorCode in setOf("queue_full", "queue_timeout", "service_busy", "service_paused") ->
+            "当前使用人数较多，请稍后重试"
         snapshot.errorCode == "agent_timeout" -> "识别超时，请保持页面稳定后重试"
         snapshot.retryable -> "识别服务暂时不可用，请稍后重试"
         else -> "本次识别失败，请重新开始会话"
@@ -564,6 +670,6 @@ class AgentSessionController(
     private companion object {
         const val MAX_GOAL_LENGTH = 500
         const val SESSION_TTL_SECONDS = 24 * 60 * 60L
-        const val RUN_WAIT_TIMEOUT_MILLIS = 100_000L
+        const val RUN_WAIT_TIMEOUT_MILLIS = 150_000L
     }
 }

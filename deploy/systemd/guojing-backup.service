@@ -1,0 +1,19 @@
+[Unit]
+Description=Backup GuoJing authorization and usage to private OSS
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=guojing
+Group=guojing
+WorkingDirectory=/opt/guojing/current
+EnvironmentFile=/etc/guojing/production.env
+ExecStart=/opt/guojing/current/.venv/bin/guojing-admin backup
+TimeoutStartSec=180
+UMask=0077
+LimitCORE=0
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/guojing/data

@@ -1,0 +1,8 @@
+[Unit]
+Description=GuoJing backup every six hours
+[Timer]
+OnCalendar=*-*-* 00,06,12,18:00:00 UTC
+Persistent=true
+Unit=guojing-backup.service
+[Install]
+WantedBy=timers.target

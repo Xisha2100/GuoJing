@@ -3,6 +3,9 @@ package com.xisha.guojing.session
 import com.xisha.guojing.data.AgentRepository
 import com.xisha.guojing.guidance.GuidanceOverlayPort
 import com.xisha.guojing.guidance.OverlayPresentation
+import com.xisha.guojing.model.DeviceAccess
+import com.xisha.guojing.model.DeviceActivation
+import com.xisha.guojing.data.AgentHttpException
 import com.xisha.guojing.model.AgentRunAccepted
 import com.xisha.guojing.model.AgentRunSnapshot
 import com.xisha.guojing.model.AgentRunStatus
@@ -30,6 +33,105 @@ import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class AgentSessionControllerTest {
+    @Test
+    fun invitation_save_and_initialization_do_not_activate_or_capture() {
+        val fixture = Fixture()
+        fixture.scope.advanceUntilIdle()
+        fixture.controller.saveInvitation("c".repeat(43))
+        fixture.scope.advanceUntilIdle()
+        assertEquals(0, fixture.repository.activations)
+        assertEquals(0, fixture.capture.captureCount)
+        assertEquals("c".repeat(43), fixture.deviceStore.value?.invitation)
+    }
+
+    @Test
+    fun activation_revalidates_target_before_capture_or_session_creation() {
+        val fixture = Fixture()
+        fixture.repository.onActivation = { fixture.capture.targetCurrent = false }
+        fixture.startSession()
+        assertEquals(1, fixture.repository.activations)
+        assertEquals(0, fixture.repository.createdSessions)
+        assertEquals(0, fixture.capture.captureCount)
+    }
+
+    @Test
+    fun missing_invitation_and_revocation_block_capture() {
+        for (code in listOf("device_revoked", "device_expired", "device_daily_quota_exhausted", "global_daily_quota_exhausted")) {
+            val fixture = Fixture()
+            fixture.repository.activationFailure = code
+            fixture.startSession()
+            assertEquals(0, fixture.capture.captureCount)
+            assertEquals(0, fixture.repository.uploads)
+            assertTrue(fixture.controller.uiState.value.message != null)
+        }
+        val fixture = Fixture()
+        fixture.deviceStore.value = null
+        fixture.startSession()
+        assertEquals(0, fixture.repository.activations)
+        assertEquals(0, fixture.capture.captureCount)
+    }
+
+    @Test
+    fun lost_upload_response_looks_up_original_without_recapture_or_reupload() {
+        val fixture = Fixture()
+        fixture.repository.loseUploadResponse = true
+        fixture.startSession()
+        assertEquals(1, fixture.capture.captureCount)
+        assertEquals(1, fixture.repository.uploads)
+        assertEquals(1, fixture.repository.lookups)
+        assertEquals(ClientPhase.ShowingGuidance, fixture.controller.uiState.value.phase)
+        assertEquals(null, fixture.store.value?.pendingTurnId)
+    }
+
+    @Test
+    fun failed_run_shows_specific_quota_message_without_another_upload() {
+        val fixture = Fixture()
+        fixture.repository.terminalFailureCode = "global_daily_quota_exhausted"
+        fixture.startSession()
+
+        assertEquals(ClientPhase.Retry, fixture.controller.uiState.value.phase)
+        assertEquals("全站今日额度已用完，北京时间零点重置", fixture.controller.uiState.value.message)
+        assertEquals(1, fixture.repository.uploads)
+        assertEquals(1, fixture.capture.captureCount)
+    }
+
+    @Test
+    fun missing_restored_run_clears_session_and_restores_floating_entry() {
+        val fixture = Fixture()
+        fixture.store.value = StoredAgentSession(
+            sessionId = UUID.fromString("11111111-1111-1111-1111-111111111111"),
+            accessToken = "token",
+            goal = "找到扫一扫",
+            targetPackage = "com.tencent.mm",
+            targetLabel = "微信",
+            createdAtEpochSeconds = 1_000L,
+            stepNumber = 0,
+            currentRunId = UUID.fromString("22222222-2222-2222-2222-222222222222"),
+            eventsEndpoint = null,
+            lastDecision = null,
+            displayWidth = null,
+            displayHeight = null,
+            rotation = null,
+        )
+        fixture.repository.runLookupFailure = AgentHttpException(404, "run_not_found")
+        fixture.scope.advanceUntilIdle()
+
+        assertEquals(null, fixture.store.value)
+        assertEquals(ClientPhase.Setup, fixture.controller.uiState.value.phase)
+        assertEquals("原会话已失效，请重新开始", fixture.controller.uiState.value.message)
+        assertEquals(OverlayPresentation.Entry, fixture.overlay.last)
+        assertEquals(false, fixture.overlay.hidden)
+        assertEquals(0, fixture.capture.captureCount)
+    }
+
+    @Test
+    fun stream_and_polling_share_150_second_budget() {
+        val fixture = Fixture()
+        fixture.repository.stalled = true
+        fixture.startSession()
+        assertEquals(150_000L, fixture.scope.testScheduler.currentTime)
+    }
+
     @Test
     fun confirmed_goal_starts_current_app_and_captures_once() {
         val fixture = Fixture()
@@ -146,12 +248,14 @@ private class Fixture {
     val overlay = FakeOverlay()
     val speech = FakeSpeech()
     val store = FakeStore()
+    val deviceStore = FakeDeviceStore()
     val controller = AgentSessionController(
         repository = repository,
         capture = capture,
         overlay = overlay,
         speech = speech,
         store = store,
+        deviceStore = deviceStore,
         scope = scope,
         nowEpochSeconds = { 1_000L },
     )
@@ -169,6 +273,24 @@ private class FakeRepository : AgentRepository {
     var closedSessions = 0
     var createdSessions = 0
     var stalled = false
+    var activations = 0
+    var uploads = 0
+    var lookups = 0
+    var loseUploadResponse = false
+    var runLookupFailure: AgentHttpException? = null
+    var terminalFailureCode: String? = null
+    var activationFailure: String? = null
+    var onActivation: () -> Unit = {}
+    override suspend fun activate(access: DeviceAccess): DeviceActivation {
+        activations += 1
+        onActivation()
+        activationFailure?.let { throw AgentHttpException(403, it) }
+        return DeviceActivation(UUID.randomUUID(), "2027-01-01T00:00:00Z")
+    }
+    override suspend fun getTurn(session: AgentSessionHandle, clientTurnId: UUID): AgentRunSnapshot {
+        lookups += 1
+        return terminal()
+    }
 
     override suspend fun createSession(clientSessionId: UUID, goal: String, targetPackage: String): AgentSessionHandle {
         createdSessions += 1
@@ -179,12 +301,19 @@ private class FakeRepository : AgentRepository {
         session: AgentSessionHandle,
         clientTurnId: UUID,
         screenshot: CapturedScreen,
-    ) = AgentRunAccepted(runId, AgentRunStatus.Queued, "/api/v1/agent/runs/$runId/events")
+    ): AgentRunAccepted {
+        uploads += 1
+        if (loseUploadResponse) throw java.io.IOException("response lost")
+        return AgentRunAccepted(runId, AgentRunStatus.Queued, "/api/v1/agent/runs/$runId/events")
+    }
 
-    override suspend fun getRun(runId: UUID, accessToken: String) = if (stalled) {
-        terminal().copy(status = AgentRunStatus.Running, result = null)
-    } else {
-        terminal()
+    override suspend fun getRun(runId: UUID, accessToken: String): AgentRunSnapshot {
+        runLookupFailure?.let { throw it }
+        return if (stalled) {
+            terminal().copy(status = AgentRunStatus.Running, result = null)
+        } else {
+            terminal()
+        }
     }
 
     override fun observeRun(eventsEndpoint: String, accessToken: String): Flow<AgentRunSnapshot> =
@@ -199,14 +328,14 @@ private class FakeRepository : AgentRepository {
     private fun terminal() = AgentRunSnapshot(
         runId = runId,
         sessionId = sessionId,
-        status = AgentRunStatus.Completed,
-        result = GuidanceDecision(
+        status = if (terminalFailureCode == null) AgentRunStatus.Completed else AgentRunStatus.Failed,
+        result = if (terminalFailureCode == null) GuidanceDecision(
             GuidanceStatus.Continue,
             "点击右上角加号",
             NormalizedTarget(0.8, 0.02, 0.98, 0.12),
             0.93,
-        ),
-        errorCode = null,
+        ) else null,
+        errorCode = terminalFailureCode,
         retryable = false,
     )
 }
@@ -216,6 +345,8 @@ private class FakeCapture : ScreenCapturePort {
     val screen = CapturedScreen(byteArrayOf(1, 2, 3), 720, 1280, 1080, 2400, 0)
     var captureCount = 0
     var displayCurrent = true
+    var targetCurrent = true
+    override fun isTargetCurrent(app: TargetApp) = targetCurrent
 
     override suspend fun capture(targetPackage: String): CapturedScreen {
         captureCount += 1
@@ -256,4 +387,10 @@ private class FakeStore : ActiveSessionStore {
     override suspend fun load() = value
     override suspend fun save(value: StoredAgentSession) { this.value = value }
     override suspend fun clear() { value = null }
+}
+
+private class FakeDeviceStore : DeviceAccessStore {
+    var value: DeviceAccess? = DeviceAccess(UUID.randomUUID(), "a".repeat(43), "b".repeat(43))
+    override suspend fun load() = value
+    override suspend fun save(value: DeviceAccess) { this.value = value }
 }
