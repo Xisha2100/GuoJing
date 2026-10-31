@@ -5,9 +5,9 @@ from typing import cast
 from uuid import UUID, uuid4
 
 import pytest
-from deepagents.backends.protocol import SandboxBackendProtocol
 
 from guojing.application.agent.coordinator import AgentQueueFull, AgentRunCoordinator
+from guojing.application.agent.ports import SandboxHandle
 from guojing.application.agent.service import AgentService
 from guojing.domain.agent_guidance import (
     AgentRun,
@@ -30,9 +30,9 @@ class FakeSandbox:
 
 class FakeRegistry:
     def __init__(self) -> None:
-        self.backend = cast(SandboxBackendProtocol, FakeSandbox())
+        self.backend = cast(SandboxHandle, FakeSandbox())
 
-    async def acquire(self, _session_id: UUID) -> SandboxBackendProtocol:
+    async def acquire(self, _session_id: UUID) -> SandboxHandle:
         return self.backend
 
     async def destroy(self, _session_id: UUID) -> None:
@@ -46,7 +46,7 @@ class FakeRegistry:
 
 
 class UnavailableRegistry(FakeRegistry):
-    async def acquire(self, _session_id: UUID) -> SandboxBackendProtocol:
+    async def acquire(self, _session_id: UUID) -> SandboxHandle:
         raise RuntimeError("docker details must not escape")
 
 
@@ -64,7 +64,7 @@ class BlockingAgent:
         history: Sequence[GuidanceStep],
         screenshot: bytes,
         image_media_type: str,
-        sandbox: SandboxBackendProtocol,
+        sandbox: SandboxHandle | None,
     ) -> GuidanceDecision:
         del session, image_media_type, sandbox
         assert screenshot == b"private-screen"
@@ -247,7 +247,8 @@ async def test_runs_share_no_sandbox_state_concurrently_within_session(
 
 
 @pytest.mark.asyncio
-async def test_cancelled_run_does_not_kill_worker(tmp_path: Path) -> None:
+@pytest.mark.parametrize("use_sandbox", [True, False])
+async def test_cancelled_run_does_not_kill_worker(tmp_path: Path, use_sandbox: bool) -> None:
     database = Database(f"sqlite:///{tmp_path / 'cancel-worker.db'}")
     Base.metadata.create_all(database.engine)
     service = AgentService(SqlAlchemyAgentRepository(database))
@@ -255,7 +256,9 @@ async def test_cancelled_run_does_not_kill_worker(tmp_path: Path) -> None:
         client_session_id=uuid4(), goal="设置", target_package="com.test.app"
     )
     agent = BlockingAgent()
-    coordinator = AgentRunCoordinator(service, agent, FakeRegistry(), maximum_concurrency=1)
+    coordinator = AgentRunCoordinator(
+        service, agent, FakeRegistry() if use_sandbox else None, maximum_concurrency=1
+    )
     await coordinator.start()
     try:
         first = _new_run(service, session)
@@ -276,8 +279,10 @@ async def test_cancelled_run_does_not_kill_worker(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("use_sandbox", [True, False])
 async def test_queue_timeout_erases_image_and_frees_capacity_before_worker_finishes(
     tmp_path: Path,
+    use_sandbox: bool,
 ) -> None:
     database = Database(f"sqlite:///{tmp_path / 'expire.db'}")
     Base.metadata.create_all(database.engine)
@@ -289,7 +294,7 @@ async def test_queue_timeout_erases_image_and_frees_capacity_before_worker_finis
     coordinator = AgentRunCoordinator(
         service,
         agent,
-        FakeRegistry(),
+        FakeRegistry() if use_sandbox else None,
         maximum_concurrency=1,
         queue_capacity=1,
         queue_timeout_seconds=0.03,

@@ -45,7 +45,7 @@ else
     run_in "$release" "$release/.venv/bin/alembic" upgrade head
 fi
 run_in "$release" "$release/.venv/bin/guojing-admin" pause
-# A real rootless cgroup probe is required for each release, without a model call.
+# The selected engine's resource gate; legacy checks rootless cgroups, bounded needs no Docker.
 run_in "$release" "$release/.venv/bin/python" -m guojing.operations.sandbox_check
 ln -s "$release" /opt/guojing/current.next
 mv -Tf /opt/guojing/current.next /opt/guojing/current

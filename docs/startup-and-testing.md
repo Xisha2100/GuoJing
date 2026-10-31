@@ -2,7 +2,7 @@
 
 ## 本地启动
 
-使用 Python 3.12.13 和 uv。需有正在运行的 Docker Engine 和已经拉取的 `python:3.12-slim` 镜像。复制根目录 `.env.example` 为 `.env.local`，把 `GUOJING_DEEPSEEK_API_KEY` 替换为个人测试密钥；文件不入库。
+使用 Python 3.12.13 和 uv。默认 `GUOJING_GUIDANCE_ENGINE=legacy_hardened` 需要正在运行的 Docker Engine 和已经拉取的 `python:3.12-slim` 镜像。复制根目录 `.env.example` 为 `.env.local`，把 `GUOJING_DEEPSEEK_API_KEY` 替换为个人测试密钥；文件不入库。显式改为 `bounded` 可测试正常 2 次、最多 4 次调用的双阶段视觉链路，此时跳过 Docker 拉取，不需 Docker 服务。
 
 ```sh
 uv sync
@@ -11,7 +11,7 @@ docker pull python:3.12-slim
 uv run uvicorn guojing.main:app --reload
 ```
 
-本地默认 `sqlite:///./data/guojing.db`，SQLite WAL 在迁移时开启。第二个连接同一数据库的 API 进程会因独占锁而拒绝启动。`GET /health` 只说明进程可响应；`GET /ready` 检查数据库、迁移、模型配置、Docker 镜像和处理协程，不调用模型。生产时须使用部署手册中的 rootless Docker、固定镜像 digest 与受限配置。
+本地默认 `sqlite:///./data/guojing.db`，SQLite WAL 在迁移时开启。第二个连接同一数据库的 API 进程会因独占锁而拒绝启动。`GET /health` 只说明进程可响应；`GET /ready` 检查数据库、迁移、模型配置和处理协程，不调用模型。旧链路另检查 Docker 镜像，生产须使用部署手册中的 rootless Docker、固定镜像 digest 与受限配置。未知引擎值启动失败；切换需重启服务，没有请求级自动回退，也无需数据库迁移。
 
 ## 邀请及接口验证
 
@@ -53,11 +53,11 @@ GUOJING_RUN_DOCKER_TESTS=1 uv run pytest -q tests/infrastructure/sandbox/test_do
 付费模型评测使用合成数据，不上传真实用户截图：
 
 ```sh
-GUOJING_RUN_DEEPSEEK_EVALUATION=1 uv run pytest -q tests/evaluation/test_deepseek_integration.py
+GUOJING_GUIDANCE_ENGINE=bounded GUOJING_RUN_DEEPSEEK_EVALUATION=1 uv run pytest -q tests/evaluation/test_deepseek_integration.py
 ```
 
-评测门槛是状态正确率至少 90%，目标框 IoU≥0.5 的比例至少 80%；这项评测仍须在提供真实模型密钥后实际运行。
+将引擎改为 `legacy_hardened` 可在同一合成集上对照旧链路；旧链路每个样本独立创建和销毁沙箱，新链路不访问 Docker。评测门槛是状态正确率至少 90%，目标框 IoU≥0.5 的比例至少 80%；这项评测仍须在提供真实模型密钥后实际运行。模型调用数不等于真实速度或质量改善，默认切换还需[重构方案](deepagents-refactor-plan-2026-10-31.md)中的留出集和真机验收。
 
 ## 故障及恢复
 
-`GET /ready` 返回 503 时，先在服务器本机看 `/internal/status` 与 `journalctl -u guojing`，然后检查数据库迁移版本、磁盘、rootless Docker socket、镜像和工作协程。清理容器失败时服务停止接受新分析；先排除 Docker 故障，再按部署手册重启服务清理同部署标签的遗留容器。备份只包含设备授权和每日用量；恢复后会话须重新开始，并用 `guojing-admin resume --reconciled` 人工解除暂停。
+`GET /ready` 返回 503 时，先在服务器本机看 `/internal/status` 与 `journalctl -u guojing`，然后检查数据库迁移版本、磁盘、模型配置和工作协程。旧链路再检查 rootless Docker socket 与镜像；其容器清理失败会停止接受新分析，排除 Docker 故障后按部署手册重启服务清理同部署标签的遗留容器。新链路不会因 Docker 未安装而不可就绪。备份只包含设备授权和每日用量；恢复后会话须重新开始，并用 `guojing-admin resume --reconciled` 人工解除暂停。

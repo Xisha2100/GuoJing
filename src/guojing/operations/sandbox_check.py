@@ -2,13 +2,16 @@
 
 from uuid import uuid4
 
-from guojing.core.config import Settings
+from guojing.core.config import GuidanceEngine, Settings
 from guojing.infrastructure.runtime import ProcessLease
 from guojing.infrastructure.sandbox.docker_backend import DockerSandboxFactory
 
 
 def verify() -> None:
     settings = Settings()
+    if settings.guidance_engine is GuidanceEngine.BOUNDED:
+        print("bounded guidance: no sandbox required")
+        return
     lease = ProcessLease(settings.database_url)
     lease.acquire()  # The API must be stopped during this probe.
     factory = DockerSandboxFactory(

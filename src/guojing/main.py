@@ -5,7 +5,6 @@ from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from datetime import timedelta
 
-from deepagents.backends.protocol import SandboxBackendProtocol
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import Response
@@ -14,10 +13,10 @@ from guojing.api.error_handlers import handle_request_validation_error
 from guojing.api.middleware import AgentSecurityMiddleware, access_response
 from guojing.api.router import api_router
 from guojing.application.agent.coordinator import AgentRunCoordinator
-from guojing.application.agent.ports import SandboxRegistry, VisualGuidanceAgent
+from guojing.application.agent.ports import SandboxHandle, SandboxRegistry, VisualGuidanceAgent
 from guojing.application.agent.service import AgentService
 from guojing.application.device_access import DeviceAccessService
-from guojing.core.config import AppEnvironment, Settings
+from guojing.core.config import AppEnvironment, GuidanceEngine, Settings
 from guojing.domain.agent_guidance import AgentSession, GuidanceDecision, GuidanceStep
 from guojing.domain.device_access import AccessDenied
 from guojing.infrastructure.agents.deep_guidance_agent import DeepGuidanceAgent
@@ -41,7 +40,7 @@ class UnconfiguredGuidanceAgent:
         history: Sequence[GuidanceStep],
         screenshot: bytes,
         image_media_type: str,
-        sandbox: SandboxBackendProtocol,
+        sandbox: SandboxHandle | None,
     ) -> GuidanceDecision:
         del session, history, screenshot, image_media_type, sandbox
         raise RuntimeError("DeepSeek is not configured")
@@ -57,6 +56,7 @@ def create_app(
 ) -> FastAPI:
     """Build an isolated application instance for production or tests."""
     app_settings = settings or Settings()
+    model_configured = visual_agent is not None or app_settings.deepseek_api_key is not None
     database = Database(app_settings.database_url)
     lease = ProcessLease(app_settings.database_url)
     access = DeviceAccessService(
@@ -81,8 +81,9 @@ def create_app(
                 model_name=app_settings.deepseek_vision_model,
                 model_timeout_seconds=app_settings.deepseek_model_timeout_seconds,
                 confidence_threshold=app_settings.agent_confidence_threshold,
+                engine=app_settings.guidance_engine,
             )
-    if sandbox_registry is None:
+    if sandbox_registry is None and app_settings.guidance_engine is GuidanceEngine.LEGACY_HARDENED:
         sandbox_registry = DockerSandboxRegistry(
             DockerSandboxFactory(
                 docker_host=app_settings.sandbox_docker_host,
@@ -110,6 +111,8 @@ def create_app(
     async def dependencies_ready() -> bool:
         try:
             if not agent_coordinator.ready:
+                return False
+            if not model_configured:
                 return False
             if not database_ready(
                 database,

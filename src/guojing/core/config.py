@@ -13,6 +13,11 @@ class AppEnvironment(StrEnum):
     PRODUCTION = "production"
 
 
+class GuidanceEngine(StrEnum):
+    LEGACY_HARDENED = "legacy_hardened"
+    BOUNDED = "bounded"
+
+
 class Settings(BaseSettings):
     """Validated, immutable settings loaded once during application startup."""
 
@@ -35,6 +40,7 @@ class Settings(BaseSettings):
     deepseek_base_url: str = "https://api.deepseek.com"
     deepseek_vision_model: str = "deepseek-flash"
     deepseek_model_timeout_seconds: int = Field(default=30, ge=1, le=120)
+    guidance_engine: GuidanceEngine = GuidanceEngine.LEGACY_HARDENED
 
     agent_run_timeout_seconds: int = Field(default=90, ge=10, le=300)
     agent_max_concurrency: int = Field(default=2, ge=1, le=16)
@@ -59,7 +65,10 @@ class Settings(BaseSettings):
         if self.environment in {AppEnvironment.STAGING, AppEnvironment.PRODUCTION}:
             if self.agent_max_concurrency > 2 or self.agent_queue_capacity > 8:
                 raise ValueError("pilot deployment supports at most 2 workers and 8 queued runs")
-            if "@sha256:" not in self.sandbox_image:
+            if (
+                self.guidance_engine is GuidanceEngine.LEGACY_HARDENED
+                and "@sha256:" not in self.sandbox_image
+            ):
                 raise ValueError("deployed sandbox image must be pinned by digest")
             if self.debug:
                 raise ValueError("debug must be disabled in deployed environments")
@@ -67,7 +76,11 @@ class Settings(BaseSettings):
                 raise ValueError("the single-instance deployment requires file-backed SQLite")
             if not self.deepseek_base_url.startswith("https://"):
                 raise ValueError("model endpoint must use HTTPS")
-            if self.sandbox_docker_host and not self.sandbox_docker_host.startswith("unix://"):
+            if (
+                self.guidance_engine is GuidanceEngine.LEGACY_HARDENED
+                and self.sandbox_docker_host
+                and not self.sandbox_docker_host.startswith("unix://")
+            ):
                 raise ValueError("deployed Docker must use a local Unix socket")
             if (
                 self.deepseek_api_key is None

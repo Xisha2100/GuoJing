@@ -100,6 +100,13 @@ data class AgentRunSnapshot(
     val retryable: Boolean,
 )
 
+data class CaptureGeometry(
+    val displayWidth: Int,
+    val displayHeight: Int,
+    val rotation: Int,
+    val windowId: Int? = null,
+)
+
 class CapturedScreen(
     val jpegBytes: ByteArray,
     val width: Int,
@@ -107,6 +114,7 @@ class CapturedScreen(
     val displayWidth: Int,
     val displayHeight: Int,
     val rotation: Int,
+    val windowId: Int? = null,
 ) {
     init {
         require(jpegBytes.isNotEmpty())

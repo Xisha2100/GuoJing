@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from guojing.core.config import AppEnvironment, Settings
+from guojing.core.config import AppEnvironment, GuidanceEngine, Settings
 
 
 def test_settings_have_safe_local_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -18,6 +18,7 @@ def test_settings_have_safe_local_defaults(monkeypatch: pytest.MonkeyPatch) -> N
     assert settings.agent_max_concurrency == 2
     assert settings.agent_confidence_threshold == 0.70
     assert settings.sandbox_image == "python:3.12-slim"
+    assert settings.guidance_engine is GuidanceEngine.LEGACY_HARDENED
 
 
 def test_settings_read_agent_environment_variables(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -36,6 +37,30 @@ def test_settings_read_agent_environment_variables(monkeypatch: pytest.MonkeyPat
 def test_settings_reject_unknown_environment() -> None:
     with pytest.raises(ValidationError):
         Settings(environment="qa", _env_file=None)
+
+
+def test_settings_reject_unknown_engine() -> None:
+    with pytest.raises(ValidationError):
+        Settings(guidance_engine="automatic-fallback", _env_file=None)
+
+
+def test_bounded_production_does_not_require_docker_but_still_requires_model_key() -> None:
+    settings = Settings(
+        environment="production",
+        guidance_engine="bounded",
+        deepseek_api_key="offline",
+        _env_file=None,
+    )
+    assert settings.guidance_engine is GuidanceEngine.BOUNDED
+    with pytest.raises(ValidationError, match="deepseek_api_key"):
+        Settings(
+            environment="production",
+            guidance_engine="bounded",
+            deepseek_api_key=None,
+            _env_file=None,
+        )
+    with pytest.raises(ValidationError, match="pinned by digest"):
+        Settings(environment="production", deepseek_api_key="offline", _env_file=None)
 
 
 def test_settings_require_deepseek_key_in_production() -> None:

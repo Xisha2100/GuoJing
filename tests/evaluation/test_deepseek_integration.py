@@ -5,7 +5,7 @@ from uuid import uuid4
 
 import pytest
 
-from guojing.core.config import Settings
+from guojing.core.config import GuidanceEngine, Settings
 from guojing.domain.agent_guidance import AgentSession, AgentSessionStatus, GuidanceStatus
 from guojing.infrastructure.agents.deep_guidance_agent import DeepGuidanceAgent
 from guojing.infrastructure.sandbox.docker_backend import DockerSandboxFactory
@@ -25,33 +25,42 @@ async def test_real_model_meets_synthetic_accuracy_and_iou_thresholds() -> None:
     settings = Settings()
     if settings.deepseek_api_key is None:
         pytest.skip("GUOJING_DEEPSEEK_API_KEY is required")
-    factory = DockerSandboxFactory(
-        docker_host=settings.sandbox_docker_host,
-        image=settings.sandbox_image,
+    factory = (
+        DockerSandboxFactory(
+            docker_host=settings.sandbox_docker_host,
+            image=settings.sandbox_image,
+        )
+        if settings.guidance_engine is GuidanceEngine.LEGACY_HARDENED
+        else None
     )
-    backend = await asyncio.to_thread(factory.create, uuid4())
     agent = DeepGuidanceAgent(
         api_key=settings.deepseek_api_key.get_secret_value(),
         base_url=settings.deepseek_base_url,
         model_name=settings.deepseek_vision_model,
         model_timeout_seconds=settings.deepseek_model_timeout_seconds,
         confidence_threshold=settings.agent_confidence_threshold,
+        engine=settings.guidance_engine,
     )
     state_matches = 0
     target_matches = 0
     cases = load_cases()
     try:
         for case in cases:
-            decision = await asyncio.wait_for(
-                agent.analyze(
-                    session=_session(case),
-                    history=[],
-                    screenshot=render_case(case),
-                    image_media_type="image/png",
-                    sandbox=backend,
-                ),
-                timeout=settings.agent_run_timeout_seconds,
-            )
+            backend = await asyncio.to_thread(factory.create, uuid4()) if factory else None
+            try:
+                decision = await asyncio.wait_for(
+                    agent.analyze(
+                        session=_session(case),
+                        history=[],
+                        screenshot=render_case(case),
+                        image_media_type="image/png",
+                        sandbox=backend,
+                    ),
+                    timeout=settings.agent_run_timeout_seconds,
+                )
+            finally:
+                if backend is not None:
+                    await asyncio.to_thread(backend.destroy)
             if decision.status is GuidanceStatus.CONTINUE:
                 state_matches += 1
             if (
@@ -84,8 +93,8 @@ async def test_real_model_meets_synthetic_accuracy_and_iou_thresholds() -> None:
                     >= 0.5
                 )
     finally:
-        await asyncio.to_thread(backend.destroy)
-        await asyncio.to_thread(factory.close)
+        if factory is not None:
+            await asyncio.to_thread(factory.close)
 
     assert state_matches / len(cases) >= 0.90
     assert target_matches / len(cases) >= 0.80

@@ -43,6 +43,7 @@ uploads/
 
 # Android and Gradle
 .gradle/
+.kotlin/
 **/build/
 .externalNativeBuild/
 .cxx/

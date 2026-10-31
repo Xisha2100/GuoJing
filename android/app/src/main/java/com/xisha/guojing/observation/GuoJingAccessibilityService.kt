@@ -73,16 +73,20 @@ class GuoJingAccessibilityService : AccessibilityService(), AccessibilityHost {
             check(foregroundPackage() == targetPackage) {
                 "Target application is not in the foreground"
             }
+            val windowId = checkNotNull(foregroundWindow()).id
             val rotation = currentRotation()
             val raw = takeRawScreenshot()
             var encoded: CapturedScreen? = null
             try {
                 raw.use {
                     withContext(Dispatchers.Default) {
-                        encoded = encodeScreenshot(it, rotation)
+                        encoded = encodeScreenshot(it, rotation, windowId)
                     }
                 }
-                check(foregroundPackage() == targetPackage && currentRotation() == rotation)
+                check(
+                    foregroundPackage() == targetPackage && currentRotation() == rotation &&
+                        foregroundWindow()?.id == windowId
+                )
                 return requireNotNull(encoded)
             } catch (error: Throwable) {
                 encoded?.erase()
@@ -274,7 +278,7 @@ class GuoJingAccessibilityService : AccessibilityService(), AccessibilityHost {
         )
     }
 
-    private fun encodeScreenshot(raw: RawScreenshot, rotation: Int): CapturedScreen {
+    private fun encodeScreenshot(raw: RawScreenshot, rotation: Int, windowId: Int): CapturedScreen {
         val hardwareBitmap = Bitmap.wrapHardwareBuffer(raw.buffer, raw.colorSpace)
             ?: throw ScreenCaptureException("Unable to read screenshot")
         try {
@@ -308,6 +312,7 @@ class GuoJingAccessibilityService : AccessibilityService(), AccessibilityHost {
                         displayWidth = displayWidth,
                         displayHeight = displayHeight,
                         rotation = rotation,
+                        windowId = windowId,
                     )
                 } finally {
                     if (resized !== source) resized.recycle()

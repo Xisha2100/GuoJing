@@ -9,7 +9,7 @@
 - 为受邀安装准备签名 APK。新版后端拒绝旧客户端的匿名请求，须同时切换客户端。签名密钥保留在发布者的受限目录，不上传服务器。
 - 运维先提供 HTTPS 告警接收地址，接受 JSON `{"service":"guojing","issues":["code"]}`。告警接收服务自身需要另行配置实际通知渠道。
 
-OSS 官方 Python SDK 提供 [ECS RAM 角色自动刷新临时凭据](https://www.alibabacloud.com/help/en/oss/developer-reference/2-0-manual-preview-version/)。沙箱限额要求 rootless Docker、cgroup v2、systemd 与 CPU/内存/PID 控制器委派，见 [Docker 官方说明](https://docs.docker.com/engine/security/rootless/tips/)。上线脚本会创建一个临时沙箱，读取内核实际 cgroup 值，并检查只读根文件系统；不通过就不切换版本。
+OSS 官方 Python SDK 提供 [ECS RAM 角色自动刷新临时凭据](https://www.alibabacloud.com/help/en/oss/developer-reference/2-0-manual-preview-version/)。默认 `legacy_hardened` 引擎的沙箱限额要求 rootless Docker、cgroup v2、systemd 与 CPU/内存/PID 控制器委派，见 [Docker 官方说明](https://docs.docker.com/engine/security/rootless/tips/)。旧链路发布会创建一个临时沙箱，读取内核实际 cgroup 值，并检查只读根文件系统；不通过就不切换版本。`bounded` 引擎不创建 Docker 客户端或容器，其资源门禁跳过容器探测，后续仍检查数据库、磁盘、模型配置及工作协程。
 
 ## 2. 首次初始化
 
@@ -20,7 +20,7 @@ cd /opt/guojing/releases/<版本号>
 bash deploy/bootstrap-ecs.sh
 ```
 
-脚本安装 Nginx、certbot、rootless Docker 依赖、固定版 uv 与 Python 3.12.13；关闭 rootful Docker 服务，创建 `guojing` 用户、持久化目录和 systemd 单元。检查 `systemctl --user` 下的 rootless Docker 服务已为 `guojing` 用户启动。`id -u guojing` 给出 socket 路径中的 UID。
+脚本安装 Nginx、certbot、rootless Docker 依赖、固定版 uv 与 Python 3.12.13；关闭 rootful Docker 服务，创建 `guojing` 用户、持久化目录和 systemd 单元。默认初始化仍准备 Docker，供旧链路和配置回退使用；新链路运行本身无需 Docker 服务。旧链路需检查 `systemctl --user` 下的 rootless Docker 服务已为 `guojing` 用户启动。`id -u guojing` 给出 socket 路径中的 UID。
 
 将 [`deploy/production.env.example`](../deploy/production.env.example) 复制到 `/etc/guojing/production.env`，填入模型 key、`unix:///run/user/<UID>/docker.sock`、固定镜像 digest、杭州私有桶、RAM 角色及告警地址，再执行：
 
@@ -47,7 +47,9 @@ curl -fsS https://api.example.com/ready
 bash deploy/admin.sh invite --label invited-device-1
 ```
 
-发布脚本锁住发布操作、冻结依赖、运行迁移、验证真实沙箱限制、切换符号链接、启动单个 Uvicorn 进程。匿名创建会话必须返回 401；`/health` 和 `/ready` 必须为 200。`/internal/status` 只可从服务器本机 `127.0.0.1:8000` 读取，公网路径由 Nginx 拒绝。
+发布脚本锁住发布操作、冻结依赖、运行迁移、验证所选引擎资源、切换符号链接、启动单个 Uvicorn 进程。匿名创建会话必须返回 401；`/health` 和 `/ready` 必须为 200。`/internal/status` 只可从服务器本机 `127.0.0.1:8000` 读取，公网路径由 Nginx 拒绝。
+
+新增配置 `GUOJING_GUIDANCE_ENGINE` 只接受 `legacy_hardened`（默认）和 `bounded`；未知值启动失败。默认切换前须完成同模型留出集和真机试点验收。新链路正常 2 次调用，最多 4 次；仍共用运行截止时间、设备配额和 12 次后备预算。此次重构没有数据库迁移、客户端协议变更或请求内自动回退。
 
 ## 3. 发布、回滚与恢复
 
@@ -56,6 +58,8 @@ bash deploy/admin.sh invite --label invited-device-1
 ```sh
 bash deploy/release.sh /opt/guojing/releases/<新版本号>
 ```
+
+切换引擎也必须先排空在途任务。配置单独切换时依次执行 `deploy/admin.sh drain --timeout 125`、停止服务、编辑受限环境文件、通过 `deploy/with-env.py` 运行 `python -m guojing.operations.sandbox_check`、重启并检查本机 `/internal/status` 的 `dependencies_ready`，成功后 `deploy/admin.sh resume`。回退到 `legacy_hardened` 前必须恢复可用的 rootless socket、已拉取的固定 digest 镜像并通过资源门禁；不要依赖未知值或失败请求自动回退。
 
 失败时保持暂停。检查 `journalctl -u guojing -n 100 --no-pager`，修复后再次发布或回滚：
 
@@ -76,7 +80,7 @@ bash deploy/admin.sh resume --reconciled
 
 ## 4. 留存、告警与上线门禁
 
-systemd 每 6 小时运行 `guojing-backup.timer`，每分钟运行 `guojing-prune.timer` 清除满 24 小时的 OSS 授权快照；`guojing-monitor.timer` 每分钟检查 API 依赖、内存/磁盘超过 80%、连续 3 次分析失败及备份滞后。监控输出仅包含队列长度、计数、tokens、耗时和错误码。会话文本不进入 OSS，数据库中创建满 24 小时的会话每分钟删除，并执行 WAL 截断。生产关闭公开 API 文档与 Uvicorn 访问日志。
+systemd 每 6 小时运行 `guojing-backup.timer`，每分钟运行 `guojing-prune.timer` 清除满 24 小时的 OSS 授权快照；`guojing-monitor.timer` 每分钟检查 API 依赖、内存/磁盘超过 80%、连续 3 次分析失败及备份滞后。内部状态响应字段保持原样。每轮日志另记录队列等待、沙箱准备/清理、各阶段耗时与 tokens、引擎/提示词版本、修订次数和固定拒绝代码；不记录目标、候选、图片、完整消息或原始异常正文。会话文本不进入 OSS，数据库中创建满 24 小时的会话每分钟删除，并执行 WAL 截断。生产关闭公开 API 文档与 Uvicorn 访问日志。
 
 - `GUOJING_RUN_DOCKER_TESTS=1 uv run pytest -q tests/infrastructure/sandbox/test_docker_integration.py`：真实容器限额、隔离与文件操作。
 - 使用固定生产配置运行付费合成评测：状态正确率 ≥90%，目标框 IoU≥0.5 的比例 ≥80%。模型 `deepseek-flash` 仍可通过配置替换，见 [DeepSeek 视觉模型说明](https://api-docs.deepseek.com/guides/vision/)。

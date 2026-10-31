@@ -5,9 +5,14 @@ from datetime import datetime
 from typing import Protocol
 from uuid import UUID
 
-from deepagents.backends.protocol import SandboxBackendProtocol
-
 from guojing.domain.agent_guidance import AgentRun, AgentSession, GuidanceDecision, GuidanceStep
+
+
+class SandboxHandle(Protocol):
+    """Opaque sandbox identity; concrete capabilities belong to infrastructure."""
+
+    @property
+    def id(self) -> str: ...
 
 
 class AgentRepository(Protocol):
@@ -48,12 +53,12 @@ class VisualGuidanceAgent(Protocol):
         history: Sequence[GuidanceStep],
         screenshot: bytes,
         image_media_type: str,
-        sandbox: SandboxBackendProtocol,
+        sandbox: SandboxHandle | None,
     ) -> GuidanceDecision: ...
 
 
 class SandboxRegistry(Protocol):
-    async def acquire(self, session_id: UUID) -> SandboxBackendProtocol: ...
+    async def acquire(self, session_id: UUID) -> SandboxHandle: ...
 
     async def destroy(self, session_id: UUID) -> None: ...
 

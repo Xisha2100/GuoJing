@@ -15,6 +15,7 @@ from guojing.application.agent.usage import ModelCallLimit, ModelUsage, current_
 from guojing.application.device_access import DeviceAccessService
 from guojing.domain.agent_guidance import AgentRun, AgentRunStatus, AgentSession
 from guojing.domain.device_access import AccessDenied
+from guojing.domain.guidance_policy import prevent_unsupported_repeat
 
 logger = logging.getLogger(__name__)
 _TERMINAL = {AgentRunStatus.COMPLETED, AgentRunStatus.FAILED, AgentRunStatus.CANCELLED}
@@ -92,7 +93,7 @@ class AgentRunCoordinator:
         self,
         service: AgentService,
         agent: VisualGuidanceAgent,
-        sandboxes: SandboxRegistry,
+        sandboxes: SandboxRegistry | None = None,
         *,
         maximum_concurrency: int = 2,
         queue_capacity: int = 8,
@@ -180,7 +181,8 @@ class AgentRunCoordinator:
         self._events.clear()
         self._session_locks.clear()
         try:
-            await asyncio.wait_for(self._sandboxes.close(), self._cleanup_timeout_seconds)
+            if self._sandboxes is not None:
+                await asyncio.wait_for(self._sandboxes.close(), self._cleanup_timeout_seconds)
         except (TimeoutError, Exception):
             self._cleanup_failed = True
 
@@ -320,10 +322,16 @@ class AgentRunCoordinator:
         token = current_usage.set(usage)
         started = monotonic()
         acquired = False
+        queue_wait_ms = round((started - item.deadline + self._queue_timeout_seconds) * 1000)
+        sandbox_prepare_ms = 0
+        cleanup_ms = 0
         try:
             async with asyncio.timeout(self._run_timeout_seconds):
                 await lock.acquire()
                 acquired = True
+                queue_wait_ms = round(
+                    (monotonic() - item.deadline + self._queue_timeout_seconds) * 1000
+                )
                 run = self._service.get_run(run_id)
                 session = self._service.get_session(session_id)
                 if run is None or run.status is not AgentRunStatus.QUEUED:
@@ -336,14 +344,33 @@ class AgentRunCoordinator:
                     return
                 run = self._service.mark_running(run)
                 self._notify(run_id)
-                sandbox = await self._sandboxes.acquire(session_id)
+                sandbox = None
+                if self._sandboxes is not None:
+                    preparing = monotonic()
+                    try:
+                        sandbox = await self._sandboxes.acquire(session_id)
+                    finally:
+                        sandbox_prepare_ms = round((monotonic() - preparing) * 1000)
+                history = self._service.get_history(session_id)
                 decision = await self._agent.analyze(
                     session=session,
-                    history=self._service.get_history(session_id),
+                    history=history,
                     screenshot=bytes(item.screenshot),
                     image_media_type=run.image_media_type,
                     sandbox=sandbox,
                 )
+                if history:
+                    previous = max(history, key=lambda step: step.step_number)
+                    previous_run = self._service.get_run(previous.run_id)
+                    checked = prevent_unsupported_repeat(
+                        decision,
+                        previous.decision,
+                        same_image=previous_run is not None
+                        and previous_run.image_sha256 == run.image_sha256,
+                    )
+                    if checked != decision:
+                        usage.rejection = "unchanged_guidance"
+                    decision = checked
                 latest = self._service.get_run(run_id)
                 current = self._service.get_session(session_id)
                 if latest and latest.status not in _TERMINAL and current:
@@ -373,7 +400,8 @@ class AgentRunCoordinator:
             usage.closed = True
             current_usage.reset(token)
             item.erase()
-            if acquired:
+            if acquired and self._sandboxes is not None:
+                cleaning = monotonic()
                 cleanup = asyncio.create_task(self._sandboxes.destroy(session_id))
                 self._cleanup_tasks.add(cleanup)
                 cleanup.add_done_callback(self._cleanup_finished)
@@ -382,7 +410,10 @@ class AgentRunCoordinator:
                 except (asyncio.CancelledError, Exception):
                     self._cleanup_failed = True
                 finally:
+                    cleanup_ms = round((monotonic() - cleaning) * 1000)
                     lock.release()
+            elif acquired:
+                lock.release()
             self._finish(run_id)
             self._notify(run_id)
             final_run = self._service.get_run(run_id)
@@ -407,6 +438,14 @@ class AgentRunCoordinator:
                         "input_tokens": usage.input_tokens,
                         "output_tokens": usage.output_tokens,
                         "duration_ms": round((monotonic() - started) * 1000),
+                        "queue_wait_ms": queue_wait_ms,
+                        "sandbox_prepare_ms": sandbox_prepare_ms,
+                        "cleanup_ms": cleanup_ms,
+                        "engine": usage.engine,
+                        "prompt_version": usage.prompt_version,
+                        "revisions": usage.revisions,
+                        "rejection": usage.rejection,
+                        "stages": usage.stages,
                     }
                 ),
             )

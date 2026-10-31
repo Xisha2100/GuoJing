@@ -2,7 +2,7 @@
 
 from collections.abc import Callable
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 class ModelCallLimit(RuntimeError):
@@ -16,6 +16,11 @@ class ModelUsage:
     input_tokens: int = 0
     output_tokens: int = 0
     closed: bool = False
+    stages: list[dict[str, str | int]] = field(default_factory=list)
+    engine: str = "unknown"
+    prompt_version: str = "unknown"
+    revisions: int = 0
+    rejection: str | None = None
 
     def begin_call(self) -> None:
         if self.closed or self.calls >= 12:

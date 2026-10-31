@@ -8,12 +8,12 @@ from typing import cast
 from uuid import uuid4
 
 import pytest
-from deepagents.backends.protocol import SandboxBackendProtocol
 from fastapi.testclient import TestClient
 from PIL import Image
 from tests.device_helpers import authorize_client
 
 from guojing.application.agent.coordinator import AgentRunCoordinator
+from guojing.application.agent.ports import SandboxHandle
 from guojing.application.agent.service import AgentService
 from guojing.core.config import AppEnvironment, Settings
 from guojing.domain.agent_guidance import (
@@ -37,7 +37,7 @@ class FakeAgent:
         history: Sequence[GuidanceStep],
         screenshot: bytes,
         image_media_type: str,
-        sandbox: SandboxBackendProtocol,
+        sandbox: SandboxHandle | None,
     ) -> GuidanceDecision:
         del session, history, sandbox
         assert screenshot.startswith(b"\x89PNG")
@@ -61,7 +61,7 @@ class SequencedAgent:
         history: Sequence[GuidanceStep],
         screenshot: bytes,
         image_media_type: str,
-        sandbox: SandboxBackendProtocol,
+        sandbox: SandboxHandle | None,
     ) -> GuidanceDecision:
         del session, screenshot, image_media_type, sandbox
         self.history_lengths.append(len(history))
@@ -88,7 +88,7 @@ class SlowAgent:
         history: Sequence[GuidanceStep],
         screenshot: bytes,
         image_media_type: str,
-        sandbox: SandboxBackendProtocol,
+        sandbox: SandboxHandle | None,
     ) -> GuidanceDecision:
         del session, history, screenshot, image_media_type, sandbox
         await asyncio.sleep(60)
@@ -104,9 +104,9 @@ class FakeSandbox:
 
 class FakeSandboxRegistry:
     def __init__(self) -> None:
-        self.backend = cast(SandboxBackendProtocol, FakeSandbox())
+        self.backend = cast(SandboxHandle, FakeSandbox())
 
-    async def acquire(self, _session_id: object) -> SandboxBackendProtocol:
+    async def acquire(self, _session_id: object) -> SandboxHandle:
         return self.backend
 
     async def destroy(self, _session_id: object) -> None:
