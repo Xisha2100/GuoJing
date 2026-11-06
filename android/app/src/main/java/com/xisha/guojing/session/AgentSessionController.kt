@@ -83,6 +83,7 @@ class AgentSessionController(
     private val deviceOperation = Mutex(locked = true)
     private var authorizationBlock: DeviceSetupState.Blocked? = null
     private var sessionGeneration = 0L
+    private var observationGeneration = 0L
 
     init {
         speech.setRangeListener { start, end -> overlay.showSpeechRange(start, end) }
@@ -214,7 +215,14 @@ class AgentSessionController(
                 previousJob?.cancelAndJoin()
                 ensureCurrent(generation)
                 active = null
-                clearStoredSession()
+                try {
+                    clearStoredSession()
+                } catch (cancelled: CancellationException) { throw cancelled }
+                catch (_: Exception) {
+                    mutableUiState.update { it.copy(phase = ClientPhase.Setup, message = "本地会话清除失败，请重试") }
+                    overlay.present(OverlayPresentation.Entry)
+                    return@launch
+                }
                 previous?.let {
                     runCatching {
                         withTimeout(5_000) { repository.closeSession(it.sessionId, it.accessToken) }
@@ -236,6 +244,8 @@ class AgentSessionController(
     }
 
     override fun onTargetLeft() {
+        observationGeneration += 1
+        lastSpokenText = null
         speech.stop()
         val session = active ?: return
         if (mutableUiState.value.phase == ClientPhase.ShowingGuidance) {
@@ -296,7 +306,12 @@ class AgentSessionController(
             )
         }
         runJob = scope.launch {
-            clearStoredSession()
+            try {
+                clearStoredSession()
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) {
+                mutableUiState.update { it.copy(message = "本地会话清除失败，请重试") }
+            }
             session?.currentRunId?.let { runId ->
                 runCatching { repository.cancelRun(runId, session.accessToken) }
             }
@@ -423,9 +438,13 @@ class AgentSessionController(
         overlay.present(OverlayPresentation.Loading(session.targetPackage))
         try {
             val target = confirmedTarget ?: TargetApp(session.targetPackage, session.targetLabel)
+            val observation = observationGeneration
             val submitted = confirmedCapture.submit(
                 session, target,
-                ensureCurrent = { ensureCurrent(generation, session.sessionId) },
+                ensureCurrent = {
+                    ensureCurrent(generation, session.sessionId)
+                    check(observation == observationGeneration) { "Observation changed" }
+                },
                 persist = { persistSession(it, generation) },
             )
             session = submitted.session
@@ -435,7 +454,12 @@ class AgentSessionController(
                 session, submitted.accepted.runId, submitted.accepted.eventsEndpoint,
             )
             ensureCurrent(generation, session.sessionId, session.currentRunId)
-            applyTerminal(session, submitted.geometry, terminal, generation)
+            if (observation != observationGeneration) {
+                clearCompletedRun(session, generation = generation)
+                showRetry("界面已发生变化，请重新识别")
+                return
+            }
+            applyTerminal(session, submitted.geometry, terminal, generation, observation)
         } catch (_: TimeoutCancellationException) {
             ensureCurrent(generation, session.sessionId)
             showRetry("等待识别结果超时，请稍后重新识别")
@@ -452,6 +476,7 @@ class AgentSessionController(
         screenshot: CaptureGeometry,
         snapshot: AgentRunSnapshot,
         generation: Long,
+        observation: Long,
     ) {
         ensureCurrent(generation, session.sessionId, snapshot.runId)
         require(snapshot.runId == requireNotNull(session.currentRunId))
@@ -464,7 +489,7 @@ class AgentSessionController(
         val decision = snapshot.result ?: throw AgentProtocolException("Missing result")
         when (decision.status) {
             GuidanceStatus.Continue -> {
-                if (!targetIsCurrent(session, screenshot) || !capture.isDisplayCurrent(
+                if (observation != observationGeneration || !targetIsCurrent(session, screenshot) || !capture.isDisplayCurrent(
                         session.targetPackage,
                         screenshot.displayWidth,
                         screenshot.displayHeight,
@@ -476,7 +501,7 @@ class AgentSessionController(
                     return
                 }
                 val next = completedStep(session, decision, generation)
-                if (!targetIsCurrent(session, screenshot) || !capture.isDisplayCurrent(
+                if (observation != observationGeneration || !targetIsCurrent(session, screenshot) || !capture.isDisplayCurrent(
                         session.targetPackage, screenshot.displayWidth,
                         screenshot.displayHeight, screenshot.rotation,
                     )
@@ -517,6 +542,11 @@ class AgentSessionController(
 
             GuidanceStatus.Completed -> {
                 val next = completedStep(session, decision, generation)
+                if (observation != observationGeneration) {
+                    clearCompletedRun(next, generation = generation)
+                    showRetry("界面已发生变化，请重新识别")
+                    return
+                }
                 val message = decision.instruction ?: "目标已经完成"
                 overlay.present(OverlayPresentation.Completed(session.targetPackage, message))
                 lastSpokenText = message
@@ -579,7 +609,13 @@ class AgentSessionController(
         } catch (error: Exception) {
             ensureCurrent(generation, session.sessionId)
             if (error is AgentHttpException && error.statusCode == 404) {
-                clearStoredSession()
+                try {
+                    clearStoredSession()
+                } catch (cancelled: CancellationException) { throw cancelled }
+                catch (_: Exception) {
+                    showRetry("本地会话清除失败，请重试")
+                    return
+                }
                 ensureCurrent(generation, session.sessionId)
                 active = null
                 if (entryEnabled) overlay.present(OverlayPresentation.Entry) else overlay.hide()
@@ -693,6 +729,7 @@ class AgentSessionController(
                 "service_busy", "queue_full", "service_paused", "service_unavailable" -> "服务繁忙，请稍后重试"
                 "invalid_invitation", "invitation_expired", "invitation_already_used" -> "邀请码无效、已使用或已过期，请联系邀请人"
                 "device_capacity_reached" -> "试点设备名额已满，请联系邀请人"
+                "session_capacity_reached" -> "本机保留的会话已达上限，请稍后重试"
                 "device_run_in_progress" -> "原任务仍在处理，请稍后重试"
                 else -> null
             }

@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from typing import Any, cast, overload
 from uuid import UUID, uuid4
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, func, select, text, update
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import IntegrityError
 
@@ -19,6 +19,7 @@ from guojing.domain.agent_guidance import (
     GuidanceStep,
     NormalizedTarget,
 )
+from guojing.domain.device_access import AccessDenied
 from guojing.infrastructure.persistence.database import Database
 from guojing.infrastructure.persistence.models import (
     AgentRunRecord,
@@ -34,6 +35,22 @@ class SqlAlchemyAgentRepository:
 
     def create_session(self, session: AgentSession) -> bool:
         with self._database.new_session() as db:
+            if self._database.engine.dialect.name == "sqlite":
+                db.execute(text("BEGIN IMMEDIATE"))
+            if session.device_id is not None:
+                count = (
+                    db.scalar(
+                        select(func.count())
+                        .select_from(AgentSessionRecord)
+                        .where(
+                            AgentSessionRecord.device_id == str(session.device_id),
+                            AgentSessionRecord.expires_at > session.created_at,
+                        )
+                    )
+                    or 0
+                )
+                if count >= 100:
+                    raise AccessDenied("session_capacity_reached", 429, 3600)
             db.add(_session_record(session))
             try:
                 db.commit()
@@ -58,6 +75,11 @@ class SqlAlchemyAgentRepository:
 
     def update_session(self, session: AgentSession) -> None:
         with self._database.new_session() as db:
+            if self._database.engine.dialect.name == "sqlite":
+                db.execute(text("BEGIN IMMEDIATE"))
+            current = db.get(AgentSessionRecord, str(session.session_id))
+            if current is None or current.status == "closed":
+                return
             db.merge(_session_record(session))
             db.commit()
 
@@ -88,6 +110,18 @@ class SqlAlchemyAgentRepository:
 
     def update_run(self, run: AgentRun) -> None:
         with self._database.new_session() as db:
+            if self._database.engine.dialect.name == "sqlite":
+                db.execute(text("BEGIN IMMEDIATE"))
+            current = db.get(AgentRunRecord, str(run.run_id))
+            if current is None:
+                return
+            retry = (
+                current.status == "failed"
+                and current.retryable
+                and run.status is AgentRunStatus.QUEUED
+            )
+            if current.status in {"completed", "failed", "cancelled"} and not retry:
+                return
             db.merge(_run_record(run))
             db.commit()
 
@@ -107,6 +141,17 @@ class SqlAlchemyAgentRepository:
 
     def complete_run(self, run: AgentRun, step: GuidanceStep, session: AgentSession) -> None:
         with self._database.new_session() as db, db.begin():
+            if self._database.engine.dialect.name == "sqlite":
+                db.execute(text("BEGIN IMMEDIATE"))
+            current_run = db.get(AgentRunRecord, str(run.run_id))
+            current_session = db.get(AgentSessionRecord, str(session.session_id))
+            if (
+                current_run is None
+                or current_run.status in {"completed", "failed", "cancelled"}
+                or current_session is None
+                or current_session.status != "active"
+            ):
+                return
             db.merge(_run_record(run))
             db.add(_step_record(step))
             db.merge(_session_record(session))

@@ -40,6 +40,66 @@ import org.junit.Test
 @OptIn(ExperimentalCoroutinesApi::class)
 class AgentSessionControllerTest {
     @Test
+    fun page_change_while_saving_result_rejects_guidance_and_replay() {
+        val fixture = Fixture()
+        val gate = CompletableDeferred<Unit>()
+        fixture.store.terminalSaveGate = gate
+        fixture.scope.advanceUntilIdle()
+        fixture.controller.onStartInApp(TargetApp("com.tencent.mm", "微信"), "找到扫一扫")
+        fixture.scope.runCurrent()
+        assertTrue(fixture.store.terminalSaveStarted)
+        fixture.controller.onTargetLeft()
+        gate.complete(Unit)
+        fixture.scope.advanceUntilIdle()
+        fixture.controller.onReplay()
+        assertEquals(ClientPhase.Retry, fixture.controller.uiState.value.phase)
+        assertTrue(!fixture.speech.spoken.contains("点击右上角加号"))
+    }
+
+    @Test
+    fun invalidated_visible_guidance_cannot_be_replayed_or_restored_by_rotation_back() {
+        val fixture = Fixture()
+        fixture.startSession()
+        fixture.capture.displayCurrent = false
+        fixture.controller.onTargetLeft()
+        fixture.capture.displayCurrent = true
+        val speechCount = fixture.speech.spoken.size
+        fixture.controller.onReplay()
+        assertEquals(speechCount, fixture.speech.spoken.size)
+        assertEquals(ClientPhase.ReadyToCapture, fixture.controller.uiState.value.phase)
+        assertTrue(fixture.overlay.last is OverlayPresentation.Ready)
+        assertEquals(1, fixture.capture.captureCount)
+    }
+
+    @Test
+    fun clear_failure_blocks_new_capture_and_does_not_prevent_remote_close() {
+        val fixture = Fixture()
+        fixture.scope.advanceUntilIdle()
+        fixture.store.failClear = true
+        fixture.startSession()
+        assertEquals(ClientPhase.Setup, fixture.controller.uiState.value.phase)
+        assertEquals(0, fixture.capture.captureCount)
+        fixture.store.failClear = false
+        fixture.startSession()
+        fixture.store.failClear = true
+        fixture.controller.endSession()
+        fixture.scope.advanceUntilIdle()
+        assertEquals(1, fixture.repository.closedSessions)
+        assertTrue(fixture.controller.uiState.value.message!!.contains("清除失败"))
+    }
+
+    @Test
+    fun page_change_during_analysis_rejects_late_guidance() {
+        val fixture = Fixture()
+        fixture.repository.onUpload = { fixture.controller.onTargetLeft() }
+        fixture.startSession()
+        assertEquals(ClientPhase.Retry, fixture.controller.uiState.value.phase)
+        assertTrue(fixture.overlay.last is OverlayPresentation.Retry)
+        assertTrue(!fixture.speech.spoken.contains("点击右上角加号"))
+        assertEquals(1, fixture.capture.captureCount)
+    }
+
+    @Test
     fun invitation_save_and_initialization_do_not_activate_or_capture() {
         val fixture = Fixture()
         fixture.scope.advanceUntilIdle()
@@ -402,6 +462,34 @@ class AgentSessionControllerTest {
     }
 
     @Test
+    fun missing_restored_run_with_clear_failure_remains_recoverable() {
+        val fixture = Fixture()
+        fixture.store.value = StoredAgentSession(
+            sessionId = UUID.fromString("11111111-1111-1111-1111-111111111111"),
+            accessToken = "token",
+            goal = "找到扫一扫",
+            targetPackage = "com.tencent.mm",
+            targetLabel = "微信",
+            createdAtEpochSeconds = 1_000L,
+            stepNumber = 0,
+            currentRunId = UUID.fromString("22222222-2222-2222-2222-222222222222"),
+            eventsEndpoint = null,
+            lastDecision = null,
+            displayWidth = null,
+            displayHeight = null,
+            rotation = null,
+        )
+        fixture.store.failClear = true
+        fixture.repository.runLookupFailure = AgentHttpException(404, "run_not_found")
+        fixture.scope.advanceUntilIdle()
+
+        assertTrue(fixture.store.value != null)
+        assertEquals(ClientPhase.Retry, fixture.controller.uiState.value.phase)
+        assertTrue(fixture.controller.uiState.value.message!!.contains("清除失败"))
+        assertEquals(0, fixture.capture.captureCount)
+    }
+
+    @Test
     fun missing_restored_run_clears_session_and_restores_floating_entry() {
         val fixture = Fixture()
         fixture.store.value = StoredAgentSession(
@@ -707,6 +795,7 @@ private class FakeSpeech : SpeechPort {
 }
 
 private class FakeStore : ActiveSessionStore {
+    var failClear = false
     var value: StoredAgentSession? = null
     var loadGate: CompletableDeferred<Unit>? = null
     var loads = 0
@@ -727,7 +816,7 @@ private class FakeStore : ActiveSessionStore {
         }
         this.value = value
     }
-    override suspend fun clear() { value = null }
+    override suspend fun clear() { check(!failClear); value = null }
 }
 
 private class FakeDeviceStore : DeviceAccessStore {

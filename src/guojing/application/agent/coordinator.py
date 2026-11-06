@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from time import monotonic
 from uuid import UUID
 
+from guojing.application.agent.io import run_db
 from guojing.application.agent.ports import SandboxRegistry, VisualGuidanceAgent
 from guojing.application.agent.service import AgentService
 from guojing.application.agent.usage import ModelCallLimit, ModelUsage, current_usage
@@ -77,7 +78,6 @@ class _PendingQueue:
         if not self.items:
             self._available.clear()
         item.erase()
-        self.task_done()
 
     def task_done(self) -> None:
         self._unfinished -= 1
@@ -118,6 +118,7 @@ class AgentRunCoordinator:
         self._events: dict[UUID, set[asyncio.Event]] = {}
         self._maintenance: asyncio.Task[None] | None = None
         self._cleanup_tasks: set[asyncio.Task[None]] = set()
+        self._expiry_tasks: set[asyncio.Task[None]] = set()
         self._stopping = False
         self._cleanup_failed = False
         self.completed_count = 0
@@ -137,11 +138,11 @@ class AgentRunCoordinator:
     def ready(self) -> bool:
         return (
             not self._stopping
-            and not self._cleanup_failed
-            and len(self._workers) == self._maximum_concurrency
+            and (not self._cleanup_failed)
+            and (len(self._workers) == self._maximum_concurrency)
             and all(not task.done() for task in self._workers)
-            and self._maintenance is not None
-            and not self._maintenance.done()
+            and (self._maintenance is not None)
+            and (not self._maintenance.done())
         )
 
     @property
@@ -157,8 +158,8 @@ class AgentRunCoordinator:
             return
         self._stopping = False
         if self._access:
-            self._access.recover()
-        self._service.fail_incomplete_runs()
+            await run_db(self._access.recover)
+        await run_db(self._service.fail_incomplete_runs)
         self._workers = [
             asyncio.create_task(self._worker(), name=f"agent-worker-{index}")
             for index in range(self._maximum_concurrency)
@@ -168,15 +169,21 @@ class AgentRunCoordinator:
     async def stop(self) -> None:
         self._stopping = True
         for item in list(self._queue.items):
-            self._fail(item.run.run_id, "server_restarted", retryable=True)
-            self._finish(item.run.run_id)
+            if item not in self._queue.items:
+                continue
             self._queue.discard(item)
+            try:
+                await self._fail(item.run.run_id, "server_restarted", retryable=True)
+                await self._finish(item.run.run_id)
+            finally:
+                self._queue.task_done()
         tasks = list(self._active.values()) + self._workers
         if self._maintenance:
             tasks.append(self._maintenance)
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
+        await asyncio.gather(*self._expiry_tasks, return_exceptions=True)
         self._workers.clear()
         self._events.clear()
         self._session_locks.clear()
@@ -190,35 +197,48 @@ class AgentRunCoordinator:
         if not self.ready or self._queue.full():
             raise AgentQueueFull("queue_full")
         item = PendingAgentRun(
-            run,
-            session,
-            bytearray(screenshot),
-            monotonic() + self._queue_timeout_seconds,
+            run, session, bytearray(screenshot), monotonic() + self._queue_timeout_seconds
         )
         try:
             self._queue.put_nowait(item)
             item.expiry_handle = asyncio.get_running_loop().call_at(
-                item.deadline, self._expire_queued, item
+                item.deadline, self._schedule_expiry, item
             )
         except BaseException:
             item.erase()
             raise
         self._notify(run.run_id)
 
-    def _expire_queued(self, item: PendingAgentRun) -> None:
+    def _schedule_expiry(self, item: PendingAgentRun) -> None:
+        task = asyncio.create_task(self._expire_queued(item))
+        self._expiry_tasks.add(task)
+        task.add_done_callback(self._expiry_finished)
+
+    def _expiry_finished(self, task: asyncio.Task[None]) -> None:
+        self._expiry_tasks.discard(task)
+        if task.cancelled() or task.exception() is not None:
+            self._cleanup_failed = True
+
+    async def _expire_queued(self, item: PendingAgentRun) -> None:
         if item in self._queue.items:
-            self._fail(item.run.run_id, "queue_timeout", retryable=True)
-            self._finish(item.run.run_id)
             self._queue.discard(item)
+            try:
+                await self._fail(item.run.run_id, "queue_timeout", retryable=True)
+                await self._finish(item.run.run_id)
+            finally:
+                self._queue.task_done()
 
     async def cancel(self, run: AgentRun) -> AgentRun:
-        updated = self._service.cancel_run(run)
+        updated = await run_db(self._service.cancel_run, run)
         for item in list(self._queue.items):
             if item.run.run_id == run.run_id:
-                self._finish(run.run_id)
                 self._queue.discard(item)
+                try:
+                    await self._finish(run.run_id)
+                finally:
+                    self._queue.task_done()
         task = self._active.get(run.run_id)
-        if task is not None and not task.cancelling():
+        if task is not None and (not task.cancelling()):
             task.cancel()
         self._notify(run.run_id)
         return updated
@@ -229,7 +249,7 @@ class AgentRunCoordinator:
         try:
             while True:
                 event.clear()
-                run = self._service.get_run(run_id)
+                run = await run_db(self._service.get_run, run_id)
                 if run is None:
                     return
                 yield run
@@ -266,28 +286,26 @@ class AgentRunCoordinator:
             await asyncio.sleep(min(1, self._queue_timeout_seconds))
             for item in list(self._queue.items):
                 if item.deadline <= monotonic():
-                    self._fail(item.run.run_id, "queue_timeout", retryable=True)
-                    self._finish(item.run.run_id)
-                    self._queue.discard(item)
-                elif not self._session_allowed(item.session):
+                    await self._expire_queued(item)
+                elif not await self._session_allowed(item.session):
                     await self.cancel(item.run)
             for run_id, session_id in list(self._active_sessions.items()):
-                session = self._service.get_session(session_id)
-                if session is None or not self._session_allowed(session):
-                    run = self._service.get_run(run_id)
+                session = await run_db(self._service.get_session, session_id)
+                if session is None or not await self._session_allowed(session):
+                    run = await run_db(self._service.get_run, run_id)
                     if run:
                         await self.cancel(run)
             if monotonic() >= next_retention:
-                for session_id in self._service.purge_expired():
+                for session_id in await run_db(self._service.purge_expired):
                     self._session_locks.pop(session_id, None)
                 next_retention = monotonic() + 60
 
-    def _session_allowed(self, session: AgentSession) -> bool:
-        if not self._service.session_is_active(session):
+    async def _session_allowed(self, session: AgentSession) -> bool:
+        if not await run_db(self._service.session_is_active, session):
             return False
         if self._access and session.device_id:
             try:
-                self._access.require_active(session.device_id)
+                await run_db(self._access.require_active, session.device_id)
             except AccessDenied:
                 return False
         return True
@@ -306,11 +324,11 @@ class AgentRunCoordinator:
                     if self._stopping:
                         raise
                 except Exception:
-                    self._fail(run_id, "agent_unavailable", retryable=True)
+                    await self._fail(run_id, "agent_unavailable", retryable=True)
             finally:
                 self._active.pop(run_id, None)
                 self._active_sessions.pop(run_id, None)
-                self._finish(run_id)
+                await self._finish(run_id)
                 item.erase()
                 self._queue.task_done()
 
@@ -332,17 +350,17 @@ class AgentRunCoordinator:
                 queue_wait_ms = round(
                     (monotonic() - item.deadline + self._queue_timeout_seconds) * 1000
                 )
-                run = self._service.get_run(run_id)
-                session = self._service.get_session(session_id)
+                run = await run_db(self._service.get_run, run_id)
+                session = await run_db(self._service.get_session, session_id)
                 if run is None or run.status is not AgentRunStatus.QUEUED:
                     return
-                if session is None or not self._session_allowed(session):
-                    self._service.cancel_run(run)
+                if session is None or not await self._session_allowed(session):
+                    await run_db(self._service.cancel_run, run)
                     return
                 if item.deadline <= monotonic():
-                    self._fail(run_id, "queue_timeout", retryable=True)
+                    await self._fail(run_id, "queue_timeout", retryable=True)
                     return
-                run = self._service.mark_running(run)
+                run = await run_db(self._service.mark_running, run)
                 self._notify(run_id)
                 sandbox = None
                 if self._sandboxes is not None:
@@ -351,7 +369,7 @@ class AgentRunCoordinator:
                         sandbox = await self._sandboxes.acquire(session_id)
                     finally:
                         sandbox_prepare_ms = round((monotonic() - preparing) * 1000)
-                history = self._service.get_history(session_id)
+                history = await run_db(self._service.get_history, session_id)
                 decision = await self._agent.analyze(
                     session=session,
                     history=history,
@@ -361,7 +379,7 @@ class AgentRunCoordinator:
                 )
                 if history:
                     previous = max(history, key=lambda step: step.step_number)
-                    previous_run = self._service.get_run(previous.run_id)
+                    previous_run = await run_db(self._service.get_run, previous.run_id)
                     checked = prevent_unsupported_repeat(
                         decision,
                         previous.decision,
@@ -371,31 +389,32 @@ class AgentRunCoordinator:
                     if checked != decision:
                         usage.rejection = "unchanged_guidance"
                     decision = checked
-                latest = self._service.get_run(run_id)
-                current = self._service.get_session(session_id)
+                latest = await run_db(self._service.get_run, run_id)
+                current = await run_db(self._service.get_session, session_id)
                 if latest and latest.status not in _TERMINAL and current:
-                    if self._session_allowed(current):
-                        self._service.complete_run(
+                    if await self._session_allowed(current):
+                        await run_db(
+                            self._service.complete_run,
                             latest,
                             current,
                             decision,
                             round((monotonic() - started) * 1000),
                         )
                     else:
-                        self._service.cancel_run(latest)
+                        await run_db(self._service.cancel_run, latest)
         except asyncio.CancelledError:
-            run = self._service.get_run(run_id)
+            run = await run_db(self._service.get_run, run_id)
             if run:
-                self._service.cancel_run(run)
+                await run_db(self._service.cancel_run, run)
             raise
         except TimeoutError:
-            self._fail(run_id, "agent_timeout", retryable=True)
+            await self._fail(run_id, "agent_timeout", retryable=True)
         except ModelCallLimit:
-            self._fail(run_id, "model_call_limit", retryable=True)
+            await self._fail(run_id, "model_call_limit", retryable=True)
         except AccessDenied as error:
-            self._fail(run_id, error.code, retryable=False)
+            await self._fail(run_id, error.code, retryable=False)
         except Exception:
-            self._fail(run_id, "agent_unavailable", retryable=True)
+            await self._fail(run_id, "agent_unavailable", retryable=True)
         finally:
             usage.closed = True
             current_usage.reset(token)
@@ -414,9 +433,9 @@ class AgentRunCoordinator:
                     lock.release()
             elif acquired:
                 lock.release()
-            self._finish(run_id)
+            await self._finish(run_id)
             self._notify(run_id)
-            final_run = self._service.get_run(run_id)
+            final_run = await run_db(self._service.get_run, run_id)
             self.model_calls += usage.calls
             self.input_tokens += usage.input_tokens
             self.output_tokens += usage.output_tokens
@@ -462,14 +481,14 @@ class AgentRunCoordinator:
         if task.cancelled() or task.exception() is not None:
             self._cleanup_failed = True
 
-    def _finish(self, run_id: UUID) -> None:
+    async def _finish(self, run_id: UUID) -> None:
         if self._access:
-            self._access.finish(run_id)
+            await run_db(self._access.finish, run_id)
 
-    def _fail(self, run_id: UUID, code: str, *, retryable: bool) -> None:
-        latest = self._service.get_run(run_id)
+    async def _fail(self, run_id: UUID, code: str, *, retryable: bool) -> None:
+        latest = await run_db(self._service.get_run, run_id)
         if latest and latest.status not in _TERMINAL:
-            self._service.fail_run(latest, code, retryable=retryable)
+            await run_db(self._service.fail_run, latest, code, retryable=retryable)
         self._notify(run_id)
 
     def _notify(self, run_id: UUID) -> None:

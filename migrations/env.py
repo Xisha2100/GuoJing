@@ -6,7 +6,10 @@ from alembic import context
 from sqlalchemy import engine_from_config, pool
 
 from guojing.core.config import Settings
-from guojing.infrastructure.persistence.database import enable_sqlite_wal
+from guojing.infrastructure.persistence.database import (
+    enable_sqlite_wal,
+    ensure_sqlite_parent_exists,
+)
 from guojing.infrastructure.persistence.models import Base
 
 config = context.config
@@ -31,6 +34,7 @@ def run_migrations_offline() -> None:
 
 def run_migrations_online() -> None:
     """Run migrations transactionally against the configured database."""
+    ensure_sqlite_parent_exists(config.get_main_option("sqlalchemy.url"))
     connectable = engine_from_config(
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",

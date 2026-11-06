@@ -3,17 +3,18 @@ package com.xisha.guojing.observation
 import android.accessibilityservice.AccessibilityService
 import android.app.AlertDialog
 import android.app.KeyguardManager
+import android.graphics.Bitmap
+import android.hardware.HardwareBuffer
+import android.hardware.display.DisplayManager
 import android.text.InputFilter
+import android.view.Display
+import android.view.WindowManager
+import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityWindowInfo
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
-import android.graphics.Bitmap
-import android.hardware.HardwareBuffer
-import android.view.Display
-import android.view.WindowManager
-import android.view.accessibility.AccessibilityEvent
 import com.xisha.guojing.guidance.AccessibilityGuidanceOverlayController
 import com.xisha.guojing.guidance.OverlayActions
 import com.xisha.guojing.guidance.OverlayPresentation
@@ -23,8 +24,12 @@ import java.io.ByteArrayOutputStream
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlin.math.roundToInt
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 
@@ -34,7 +39,52 @@ class GuoJingAccessibilityService : AccessibilityService(), AccessibilityHost {
     private var actions: OverlayActions? = null
     private var captureInProgress = false
     private var goalDialog: AlertDialog? = null
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private var lastDisplayGeometry: Triple<Int, Int, Int>? = null
+    private val displayListener = object : DisplayManager.DisplayListener {
+        override fun onDisplayAdded(displayId: Int) {}
+        override fun onDisplayRemoved(displayId: Int) {
+            if (displayId == Display.DEFAULT_DISPLAY) invalidateObservation()
+        }
+        override fun onDisplayChanged(displayId: Int) {
+            if (displayId != Display.DEFAULT_DISPLAY) return
+            val geometry = displayGeometry()
+            if (geometry != lastDisplayGeometry) {
+                lastDisplayGeometry = geometry
+                invalidateObservation()
+                updateOverlayVisibility()
+            }
+        }
+    }
+
+    private fun displayGeometry(): Triple<Int, Int, Int> {
+        val bounds = getSystemService(WindowManager::class.java).currentWindowMetrics.bounds
+        return Triple(bounds.width(), bounds.height(), currentRotation())
+    }
+
+    private fun invalidateObservation() {
+        actions?.onTargetLeft()
+        val old = presentation
+        if (old is OverlayPresentation.Guidance) {
+            presentation = OverlayPresentation.Retry(old.targetPackage, "界面已变化，请重新识别")
+        }
+        overlayController?.temporarilyHide()
+    }
+
+    private suspend fun awaitCaptureReady(target: TargetApp) {
+        val ready = ObservationPolicy.awaitReady {
+            ObservationPolicy.captureReady(
+                isTargetCurrent(target),
+                goalDialog != null || windows.any { it.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD },
+                getSystemService(KeyguardManager::class.java).isKeyguardLocked,
+            )
+        }
+        if (ready) return
+        throw ScreenCaptureException("Input or target window is not ready")
+    }
+
     private var previousPackage: String? = null
+    private var previousWindowId: Int? = null
 
     override fun showMessage(message: String) {
         Toast.makeText(this, message, Toast.LENGTH_LONG).show()
@@ -47,6 +97,10 @@ class GuoJingAccessibilityService : AccessibilityService(), AccessibilityHost {
     override fun onServiceConnected() {
         super.onServiceConnected()
         overlayController = AccessibilityGuidanceOverlayController(this)
+        lastDisplayGeometry = displayGeometry()
+        getSystemService(DisplayManager::class.java).registerDisplayListener(
+            displayListener, android.os.Handler(mainLooper),
+        )
         AccessibilityRuntimeBridge.attach(this)
     }
 
@@ -57,6 +111,15 @@ class GuoJingAccessibilityService : AccessibilityService(), AccessibilityHost {
             previousPackage = current
             actions?.onTargetLeft()
         }
+        val windowId = foregroundWindow()?.id
+        val windowChanged = previousWindowId != null && previousWindowId != windowId
+        previousWindowId = windowId
+        if (goalDialog == null && ObservationPolicy.invalidates(
+                event.packageName?.toString() == presentation.targetPackage(),
+                event.eventType in setOf(AccessibilityEvent.TYPE_VIEW_SCROLLED,
+                    AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED),
+                windowChanged,
+            )) invalidateObservation()
         updateOverlayVisibility()
     }
 
@@ -75,6 +138,7 @@ class GuoJingAccessibilityService : AccessibilityService(), AccessibilityHost {
             }
             val windowId = checkNotNull(foregroundWindow()).id
             val rotation = currentRotation()
+            awaitCaptureReady(TargetApp(targetPackage, targetPackage, windowId))
             val raw = takeRawScreenshot()
             var encoded: CapturedScreen? = null
             try {
@@ -85,7 +149,9 @@ class GuoJingAccessibilityService : AccessibilityService(), AccessibilityHost {
                 }
                 check(
                     foregroundPackage() == targetPackage && currentRotation() == rotation &&
-                        foregroundWindow()?.id == windowId
+                        foregroundWindow()?.id == windowId &&
+                        !windows.any { it.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD } &&
+                        !getSystemService(KeyguardManager::class.java).isKeyguardLocked
                 )
                 return requireNotNull(encoded)
             } catch (error: Throwable) {
@@ -130,6 +196,8 @@ class GuoJingAccessibilityService : AccessibilityService(), AccessibilityHost {
     }
 
     override fun onDestroy() {
+        serviceScope.cancel()
+        getSystemService(DisplayManager::class.java).unregisterDisplayListener(displayListener)
         goalDialog?.dismiss()
         AccessibilityRuntimeBridge.detach(this)
         overlayController?.hide()
@@ -173,7 +241,8 @@ class GuoJingAccessibilityService : AccessibilityService(), AccessibilityHost {
                     value.targetPackage, value.displayWidth, value.displayHeight, value.rotation,
                 )
             ) {
-                OverlayPresentation.Retry(value.targetPackage, "屏幕方向已变化，请重新识别")
+                invalidateObservation()
+                presentation
             } else {
                 value
             }
@@ -239,14 +308,22 @@ class GuoJingAccessibilityService : AccessibilityService(), AccessibilityHost {
                 getSystemService(android.view.inputmethod.InputMethodManager::class.java)
                     .hideSoftInputFromWindow(input.windowToken, 0)
                 dialog.dismiss()
-                android.os.Handler(mainLooper).postDelayed({
+                serviceScope.launch {
+                    try {
+                        awaitCaptureReady(TargetApp(targetPackage, label, windowId))
+                    } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                        throw cancelled
+                    } catch (_: Exception) {
+                        showMessage("键盘或目标界面尚未就绪，请重新开始")
+                        return@launch
+                    }
                     val current = foregroundWindow()
                     if (current?.id == windowId && foregroundPackage() == targetPackage) {
                         actions?.onStartInApp(TargetApp(targetPackage, label, window.id), goal)
                     } else {
-                        Toast.makeText(this, "应用已切换，请重新点击悬浮入口", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(this@GuoJingAccessibilityService, "应用已切换，请重新点击悬浮入口", Toast.LENGTH_SHORT).show()
                     }
-                }, 250)
+                }
             }
         }
     }

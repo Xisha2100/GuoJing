@@ -8,6 +8,7 @@ from starlette.datastructures import MutableHeaders
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from guojing.application.agent.io import run_db
 from guojing.application.device_access import DeviceAccessService
 from guojing.domain.device_access import AccessDenied
 
@@ -68,10 +69,12 @@ class AgentSecurityMiddleware:
         try:
             if is_agent:
                 access = cast(DeviceAccessService, scope["app"].state.device_access)
-                identity = access.authenticate(headers.get("authorization", ""))
+                identity = await run_db(access.authenticate, headers.get("authorization", ""))
                 scope.setdefault("state", {})["device"] = identity
                 if scope["method"] == "POST" and path.endswith("/runs"):
                     self._rates.check(f"run:{identity.device_id}", 6)
+                if scope["method"] == "POST" and path.rstrip("/").endswith("/sessions"):
+                    self._rates.check(f"session:{identity.device_id}", 6)
             else:
                 client = scope.get("client")
                 self._rates.check(f"activate:{client[0] if client else 'unknown'}", 5)
@@ -90,7 +93,6 @@ class AgentSecurityMiddleware:
         except AccessDenied as error:
             await access_response(error)(scope, receive, send)
             return
-
         size = 0
         too_large = False
         response_started = False

@@ -13,6 +13,7 @@ from guojing.api.error_handlers import handle_request_validation_error
 from guojing.api.middleware import AgentSecurityMiddleware, access_response
 from guojing.api.router import api_router
 from guojing.application.agent.coordinator import AgentRunCoordinator
+from guojing.application.agent.io import run_db
 from guojing.application.agent.ports import SandboxHandle, SandboxRegistry, VisualGuidanceAgent
 from guojing.application.agent.service import AgentService
 from guojing.application.device_access import DeviceAccessService
@@ -105,7 +106,6 @@ def create_app(
             cleanup_timeout_seconds=app_settings.sandbox_cleanup_timeout_seconds,
             access=access,
         )
-
     agent_coordinator.bind_access(access)
 
     async def dependencies_ready() -> bool:
@@ -114,7 +114,8 @@ def create_app(
                 return False
             if not model_configured:
                 return False
-            if not database_ready(
+            if not await run_db(
+                database_ready,
                 database,
                 lease.directory,
                 app_settings.minimum_free_disk_bytes,
@@ -130,7 +131,7 @@ def create_app(
             return False
 
     async def is_ready() -> bool:
-        return await dependencies_ready() and access.accepting()
+        return await dependencies_ready() and await run_db(access.accepting)
 
     @asynccontextmanager
     async def lifespan(_application: FastAPI) -> AsyncIterator[None]:
@@ -144,7 +145,7 @@ def create_app(
                         raise RuntimeError("Docker startup validation failed") from None
             await agent_coordinator.start()
             try:
-                if deployed and not await dependencies_ready():
+                if deployed and (not await dependencies_ready()):
                     raise RuntimeError("production dependencies are not ready")
                 yield
             finally:
@@ -167,10 +168,7 @@ def create_app(
     )
     application.add_middleware(AgentSecurityMiddleware)
     application.add_exception_handler(AccessDenied, handle_access_error)
-    application.add_exception_handler(
-        RequestValidationError,
-        handle_request_validation_error,
-    )
+    application.add_exception_handler(RequestValidationError, handle_request_validation_error)
     application.state.device_access = access
     application.state.is_ready = is_ready
     application.state.dependencies_ready = dependencies_ready

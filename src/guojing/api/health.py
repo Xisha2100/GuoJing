@@ -6,6 +6,8 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
+from guojing.application.agent.io import run_db
+
 router = APIRouter(tags=["operations"])
 
 
@@ -16,9 +18,7 @@ class HealthResponse(BaseModel):
 
 
 @router.get(
-    "/health",
-    response_model=HealthResponse,
-    summary="Check whether the API process can respond",
+    "/health", response_model=HealthResponse, summary="Check whether the API process can respond"
 )
 async def get_health() -> HealthResponse:
     """Return process liveness without calling external dependencies."""
@@ -43,7 +43,7 @@ async def internal_status(request: Request) -> JSONResponse:
     return JSONResponse(
         {
             "dependencies_ready": await request.app.state.dependencies_ready(),
-            "accepting": request.app.state.device_access.accepting(),
+            "accepting": await run_db(request.app.state.device_access.accepting),
             "queue_depth": coordinator.queue_depth,
             "active_count": coordinator.active_count,
             "completed": coordinator.completed_count,

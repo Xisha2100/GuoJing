@@ -1,19 +1,24 @@
 """SQLAlchemy engine and transaction-session configuration."""
 
 import sqlite3
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
 from sqlalchemy import Engine, create_engine, event
 from sqlalchemy.engine import make_url
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session, sessionmaker
+
+from guojing.domain.device_access import AccessDenied
 
 
 class Database:
     """Own one engine and create one short-lived Session per transaction."""
 
     def __init__(self, database_url: str) -> None:
-        _ensure_sqlite_parent_exists(database_url)
+        ensure_sqlite_parent_exists(database_url)
         self.engine = create_engine(database_url, hide_parameters=True)
         if self.engine.dialect.name == "sqlite":
             event.listen(self.engine, "connect", _configure_sqlite_connection)
@@ -23,16 +28,25 @@ class Database:
             expire_on_commit=False,
         )
 
-    def new_session(self) -> Session:
+    @contextmanager
+    def new_session(self) -> Iterator[Session]:
         """Create a session; callers must close it, normally via a context manager."""
-        return self._session_factory()
+        try:
+            with self._session_factory() as session:
+                yield session
+        except OperationalError as error:
+            if isinstance(error.orig, sqlite3.OperationalError) and getattr(
+                error.orig, "sqlite_errorcode", None
+            ) in {sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED}:
+                raise AccessDenied("service_busy", 503, 5) from None
+            raise
 
     def dispose(self) -> None:
         """Release pooled database connections during application shutdown."""
         self.engine.dispose()
 
 
-def _ensure_sqlite_parent_exists(database_url: str) -> None:
+def ensure_sqlite_parent_exists(database_url: str) -> None:
     url = make_url(database_url)
     if not url.drivername.startswith("sqlite") or not url.database:
         return

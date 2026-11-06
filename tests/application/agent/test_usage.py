@@ -31,3 +31,30 @@ def test_late_model_call_cannot_start_after_run_has_finished() -> None:
     with pytest.raises(ModelCallLimit):
         usage.begin_call()
     assert usage.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_concurrent_model_callbacks_do_not_repeat_slow_first_admission() -> None:
+    from threading import Event
+
+    entered, release = Event(), Event()
+    admitted: list[bool] = []
+
+    def admit() -> None:
+        admitted.append(True)
+        entered.set()
+        assert release.wait(2)
+
+    usage = ModelUsage(admit)
+    callback = UsageCallback(usage)
+    tasks = [asyncio.create_task(callback.on_chat_model_start()) for _ in range(14)]
+    try:
+        while not entered.is_set():
+            await asyncio.sleep(0.001)
+        await asyncio.sleep(0.01)
+        assert admitted == [True]
+    finally:
+        release.set()
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+    assert usage.calls == 12
+    assert sum(isinstance(result, ModelCallLimit) for result in results) == 2

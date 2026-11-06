@@ -97,6 +97,10 @@ cd android && ./gradlew connectedDebugAndroidTest
 
 支线研究：[Jev 图像与 Box 接入评估](docs/learning/62-jev-vision-evaluation.md)（2026-10-16）。建议先验证“视觉模型生成候选 + Jev 定位及核验”的混合方案；当前仅完成资料、代码和离线兼容性评估，尚未接入默认链路或取得真实模型效果数据。
 
+项目审计：[项目说明与代码审计](docs/project-audit-2026-11-06.md)（2026-11-06）涵盖架构、接口、数据、部署、验证证据及整改条件。原 2 项 P1、6 项 P2 已修复并补充回归：后端 178 项、Android JVM 71 项、Pixel_7 设备测试 13 项通过。真实模型、Docker 和厂商设备场景仍须现场验收。模块记录见 [66 · 项目审计](docs/learning/66-project-audit.md) 和 [67 · 审计问题修复](docs/learning/67-audit-remediation.md)。
+
+当前创建会话限制为每设备每分钟 6 次、最多 100 条未过期会话（已关闭也计数，默认保留 24 小时）；拒绝返回 429 和重试提示。数据库阻塞操作最多并发 4 个，SQLite 锁超时返回 503 `service_busy`。监控观察到接入连续暂停超过 10 分钟时告警，恢复后清除计时。
+
 ## License
 
 本项目使用 [GNU General Public License v3.0](LICENSE)。

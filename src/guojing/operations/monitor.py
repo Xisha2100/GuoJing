@@ -16,11 +16,13 @@ from guojing.infrastructure.runtime import ProcessLease
 
 def monitor(database: Database) -> None:
     issues: list[str] = []
+    accepting: bool | None = None
     try:
         with httpx.Client(timeout=8, trust_env=False) as client:
             response = client.get("http://127.0.0.1:8000/internal/status")
             response.raise_for_status()
             metrics = response.json()
+        accepting = metrics["accepting"]
         if not metrics["dependencies_ready"]:
             issues.append("service_unavailable")
         if metrics["consecutive_failures"] >= 3:
@@ -38,7 +40,19 @@ def monitor(database: Database) -> None:
     if 1 - memory["MemAvailable"] / memory["MemTotal"] >= 0.8:
         issues.append("memory_above_80_percent")
     now = datetime.now(UTC)
-    with database.new_session() as db:
+    with SqlAlchemyDeviceRepository(database).transaction() as db:
+        paused = db.get(OperationsRecord, "pause_observed_at")
+        if accepting is True:
+            if paused is not None:
+                db.delete(paused)
+        elif accepting is False and paused is None:
+            db.add(OperationsRecord(key="pause_observed_at", value=now.isoformat()))
+        elif (
+            accepting is False
+            and paused is not None
+            and now - datetime.fromisoformat(paused.value) >= timedelta(minutes=10)
+        ):
+            issues.append("admission_paused_too_long")
         backup = db.get(OperationsRecord, "backup_success_at")
         if backup is None or datetime.fromisoformat(backup.value) < now - timedelta(
             hours=6, minutes=15

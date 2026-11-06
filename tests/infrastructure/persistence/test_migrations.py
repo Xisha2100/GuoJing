@@ -12,7 +12,7 @@ def test_migration_replaces_legacy_schema_with_agent_tables(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    database_path = tmp_path / "migrated.db"
+    database_path = tmp_path / "missing" / "nested" / "migrated.db"
     monkeypatch.setenv("GUOJING_DATABASE_URL", f"sqlite:///{database_path}")
     config = Config("alembic.ini")
 

@@ -5,6 +5,7 @@ from typing import Any
 from langchain_core.callbacks import AsyncCallbackHandler
 from langchain_core.outputs import LLMResult
 
+from guojing.application.agent.io import run_db
 from guojing.application.agent.usage import ModelUsage
 
 
@@ -15,10 +16,10 @@ class UsageCallback(AsyncCallbackHandler):
         self.usage = usage
 
     async def on_chat_model_start(self, *args: Any, **kwargs: Any) -> None:
-        self.usage.begin_call()
+        await run_db(self.usage.begin_call)
 
     async def on_llm_start(self, *args: Any, **kwargs: Any) -> None:
-        self.usage.begin_call()
+        await run_db(self.usage.begin_call)
 
     async def on_llm_end(self, response: LLMResult, **kwargs: Any) -> None:
         tokens = (response.llm_output or {}).get("token_usage", {})

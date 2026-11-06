@@ -3,6 +3,7 @@
 from collections.abc import Callable
 from contextvars import ContextVar
 from dataclasses import dataclass, field
+from threading import Lock
 
 
 class ModelCallLimit(RuntimeError):
@@ -12,6 +13,7 @@ class ModelCallLimit(RuntimeError):
 @dataclass
 class ModelUsage:
     before_first_call: Callable[[], None]
+    _call_lock: Lock = field(default_factory=Lock, init=False, repr=False)
     calls: int = 0
     input_tokens: int = 0
     output_tokens: int = 0
@@ -23,11 +25,12 @@ class ModelUsage:
     rejection: str | None = None
 
     def begin_call(self) -> None:
-        if self.closed or self.calls >= 12:
-            raise ModelCallLimit("model_call_limit")
-        if self.calls == 0:
-            self.before_first_call()
-        self.calls += 1
+        with self._call_lock:
+            if self.closed or self.calls >= 12:
+                raise ModelCallLimit("model_call_limit")
+            if self.calls == 0:
+                self.before_first_call()
+            self.calls += 1
 
 
 current_usage: ContextVar[ModelUsage | None] = ContextVar("model_usage", default=None)

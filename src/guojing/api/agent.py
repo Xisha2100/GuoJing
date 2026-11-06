@@ -15,6 +15,7 @@ from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from guojing.application.agent.coordinator import AgentQueueFull, AgentRunCoordinator
+from guojing.application.agent.io import run_db
 from guojing.application.agent.service import (
     AgentRunNotFound,
     AgentService,
@@ -22,32 +23,24 @@ from guojing.application.agent.service import (
     AgentSessionConflict,
     AgentSessionNotFound,
 )
-from guojing.domain.agent_guidance import (
-    AgentRun,
-    AgentSession,
-    GuidanceDecision,
-)
+from guojing.domain.agent_guidance import AgentRun, AgentSession, GuidanceDecision
 from guojing.domain.device_access import AccessDenied, DeviceIdentity
 
 router = APIRouter(prefix="/api/v1/agent", tags=["visual guidance agent"])
-
 SCHEMA_VERSION: Final[Literal["1.0"]] = "1.0"
 MAX_IMAGE_BYTES = 8 * 1024 * 1024
 MAX_IMAGE_DIMENSION = 4096
-MAX_BASE64_LENGTH = ((MAX_IMAGE_BYTES + 2) // 3) * 4
+MAX_BASE64_LENGTH = (MAX_IMAGE_BYTES + 2) // 3 * 4
 Image.MAX_IMAGE_PIXELS = MAX_IMAGE_DIMENSION * MAX_IMAGE_DIMENSION
 
 
 class SessionCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-
     schema_version: Literal["1.0"]
     client_session_id: UUID
     goal: str = Field(min_length=1, max_length=500)
     target_package: str = Field(
-        min_length=3,
-        max_length=255,
-        pattern=r"^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+$",
+        min_length=3, max_length=255, pattern="^[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z][A-Za-z0-9_]*)+$"
     )
 
     @field_validator("goal")
@@ -61,7 +54,6 @@ class SessionCreateRequest(BaseModel):
 
 class SessionCreateResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
-
     schema_version: Literal["1.0"] = SCHEMA_VERSION
     session_id: UUID
     access_token: str
@@ -70,7 +62,6 @@ class SessionCreateResponse(BaseModel):
 
 class RunCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-
     schema_version: Literal["1.0"]
     client_turn_id: UUID
     image_media_type: Literal["image/jpeg", "image/png"]
@@ -81,7 +72,6 @@ class RunCreateRequest(BaseModel):
 
 class TargetResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
-
     left: float
     top: float
     right: float
@@ -90,7 +80,6 @@ class TargetResponse(BaseModel):
 
 class GuidanceDecisionResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
-
     status: Literal["continue", "completed", "cannot_determine"]
     instruction: str | None
     target: TargetResponse | None
@@ -116,7 +105,6 @@ class GuidanceDecisionResponse(BaseModel):
 
 class RunAcceptedResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
-
     schema_version: Literal["1.0"] = SCHEMA_VERSION
     run_id: UUID
     status: Literal["queued", "running", "completed", "failed", "cancelled"]
@@ -125,7 +113,6 @@ class RunAcceptedResponse(BaseModel):
 
 class RunResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
-
     schema_version: Literal["1.0"] = SCHEMA_VERSION
     run_id: UUID
     session_id: UUID
@@ -140,11 +127,9 @@ class RunResponse(BaseModel):
             run_id=value.run_id,
             session_id=value.session_id,
             status=value.status.value,
-            result=(
-                GuidanceDecisionResponse.from_domain(value.result)
-                if value.result is not None
-                else None
-            ),
+            result=GuidanceDecisionResponse.from_domain(value.result)
+            if value.result is not None
+            else None,
             error_code=value.error_code,
             retryable=value.retryable,
         )
@@ -161,14 +146,11 @@ def _coordinator(request: Request) -> AgentRunCoordinator:
     return cast(AgentRunCoordinator, request.app.state.agent_coordinator)
 
 
-@router.post(
-    "/sessions",
-    response_model=SessionCreateResponse,
-    status_code=status.HTTP_201_CREATED,
-)
+@router.post("/sessions", response_model=SessionCreateResponse, status_code=status.HTTP_201_CREATED)
 async def create_session(payload: SessionCreateRequest, request: Request) -> SessionCreateResponse:
     try:
-        session, token = _service(request).create_session(
+        session, token = await run_db(
+            _service(request).create_session,
             client_session_id=payload.client_session_id,
             goal=payload.goal,
             target_package=payload.target_package,
@@ -185,17 +167,15 @@ async def create_session(payload: SessionCreateRequest, request: Request) -> Ses
     status_code=status.HTTP_202_ACCEPTED,
 )
 async def create_run(
-    session_id: UUID,
-    payload: RunCreateRequest,
-    request: Request,
-    token: AgentToken = None,
+    session_id: UUID, payload: RunCreateRequest, request: Request, token: AgentToken = None
 ) -> RunAcceptedResponse:
     service = _service(request)
-    session = _require_session(service, session_id, token, _device(request))
-    image = _decode_and_validate_image(payload)
+    session = await _require_session(service, session_id, token, _device(request))
+    image = await run_db(_decode_and_validate_image, payload)
     digest = sha256(image).hexdigest()
     try:
-        run, created = service.create_or_get_run(
+        run, created = await run_db(
+            service.create_or_get_run,
             session=session,
             client_turn_id=payload.client_turn_id,
             image_sha256=digest,
@@ -210,22 +190,24 @@ async def create_run(
         run.image_sha256 != digest
         or run.image_media_type != payload.image_media_type
         or run.screen_width != payload.screen_width
-        or run.screen_height != payload.screen_height
+        or (run.screen_height != payload.screen_height)
     ):
         raise HTTPException(status_code=409, detail="client_turn_id payload does not match")
     if created:
         try:
             if not await request.app.state.is_ready():
                 raise AccessDenied("service_unavailable", 503, 5)
-            request.app.state.device_access.reserve(run.run_id, _device(request).device_id)
+            await run_db(
+                request.app.state.device_access.reserve, run.run_id, _device(request).device_id
+            )
         except AccessDenied as error:
-            service.fail_run(run, error.code, retryable=True)
+            await run_db(service.fail_run, run, error.code, retryable=True)
             raise
         try:
             await _coordinator(request).submit(run=run, session=session, screenshot=image)
         except AgentQueueFull as error:
-            request.app.state.device_access.finish(run.run_id)
-            service.fail_run(run, "queue_full", retryable=True)
+            await run_db(request.app.state.device_access.finish, run.run_id)
+            await run_db(service.fail_run, run, "queue_full", retryable=True)
             raise AccessDenied("service_busy", 429, 5) from error
     return RunAcceptedResponse(
         run_id=run.run_id,
@@ -240,14 +222,11 @@ def _device(request: Request) -> DeviceIdentity:
 
 @router.get("/sessions/{session_id}/turns/{client_turn_id}", response_model=RunResponse)
 async def get_turn(
-    session_id: UUID,
-    client_turn_id: UUID,
-    request: Request,
-    token: AgentToken = None,
+    session_id: UUID, client_turn_id: UUID, request: Request, token: AgentToken = None
 ) -> RunResponse:
     service = _service(request)
-    _require_session(service, session_id, token, _device(request))
-    run = service.get_run_by_turn(session_id, client_turn_id)
+    await _require_session(service, session_id, token, _device(request))
+    run = await run_db(service.get_run_by_turn, session_id, client_turn_id)
     if run is None:
         raise HTTPException(status_code=404, detail="agent run was not found")
     return RunResponse.from_domain(run)
@@ -255,23 +234,23 @@ async def get_turn(
 
 @router.get("/runs/{run_id}", response_model=RunResponse)
 async def get_run(run_id: UUID, request: Request, token: AgentToken = None) -> RunResponse:
-    _session, run = _require_run(_service(request), run_id, token, _device(request))
+    _session, run = await _require_run(_service(request), run_id, token, _device(request))
     return RunResponse.from_domain(run)
 
 
 @router.get("/runs/{run_id}/events")
 async def get_run_events(
-    run_id: UUID,
-    request: Request,
-    token: AgentToken = None,
+    run_id: UUID, request: Request, token: AgentToken = None
 ) -> StreamingResponse:
-    _require_run(_service(request), run_id, token, _device(request))
+    await _require_run(_service(request), run_id, token, _device(request))
 
     async def stream() -> AsyncIterator[str]:
         async for run in _coordinator(request).events(run_id):
             try:
-                request.app.state.device_access.require_active(_device(request).device_id)
-                _require_run(_service(request), run_id, token, _device(request))
+                await run_db(
+                    request.app.state.device_access.require_active, _device(request).device_id
+                )
+                await _require_run(_service(request), run_id, token, _device(request))
             except (AccessDenied, HTTPException):
                 return
             payload = RunResponse.from_domain(run).model_dump(mode="json")
@@ -285,37 +264,26 @@ async def get_run_events(
 
 
 @router.delete("/runs/{run_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def cancel_run(
-    run_id: UUID,
-    request: Request,
-    token: AgentToken = None,
-) -> Response:
-    _session, run = _require_run(_service(request), run_id, token, _device(request))
+async def cancel_run(run_id: UUID, request: Request, token: AgentToken = None) -> Response:
+    _session, run = await _require_run(_service(request), run_id, token, _device(request))
     await _coordinator(request).cancel(run)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.delete("/sessions/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def close_session(
-    session_id: UUID,
-    request: Request,
-    token: AgentToken = None,
-) -> Response:
+async def close_session(session_id: UUID, request: Request, token: AgentToken = None) -> Response:
     service = _service(request)
-    session = _require_session(service, session_id, token, _device(request))
-    service.close_session(session)
+    session = await _require_session(service, session_id, token, _device(request))
+    await run_db(service.close_session, session)
     await _coordinator(request).destroy_session(session_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-def _require_session(
-    service: AgentService,
-    session_id: UUID,
-    token: str | None,
-    device: DeviceIdentity,
+async def _require_session(
+    service: AgentService, session_id: UUID, token: str | None, device: DeviceIdentity
 ) -> AgentSession:
     try:
-        session = service.require_session(session_id, token or "")
+        session = await run_db(service.require_session, session_id, token or "")
         if session.device_id != device.device_id:
             raise AgentSessionNotFound
         return session
@@ -323,17 +291,14 @@ def _require_session(
         raise HTTPException(status_code=404, detail="agent session was not found") from error
 
 
-def _require_run(
-    service: AgentService,
-    run_id: UUID,
-    token: str | None,
-    device: DeviceIdentity,
+async def _require_run(
+    service: AgentService, run_id: UUID, token: str | None, device: DeviceIdentity
 ) -> tuple[AgentSession, AgentRun]:
     try:
-        session, run = service.get_authorized_run(run_id, token or "")
+        session, run = await run_db(service.get_authorized_run, run_id, token or "")
         if session.device_id != device.device_id:
             raise AgentRunNotFound
-        return session, run
+        return (session, run)
     except AgentRunNotFound as error:
         raise HTTPException(status_code=404, detail="agent run was not found") from error
 
